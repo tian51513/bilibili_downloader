@@ -8,7 +8,7 @@ from bilibili_downloader.config import SETTINGS_PATH, load_settings, save_settin
 logger = logging.getLogger(__name__)
 
 
-def create_routes(db, env):
+def create_routes(db, env, task_service=None):
     async def index(request: Request) -> HTMLResponse:
         from bilibili_downloader.config import SETTINGS_PATH
         stats = await db.get_stats()
@@ -118,6 +118,53 @@ def create_routes(db, env):
         except PermissionError:
             return JSONResponse({"ok": False, "error": "permission denied"}, status_code=403)
 
+    async def api_tasks(request: Request) -> JSONResponse:
+        status = request.query_params.get("status")
+        page = int(request.query_params.get("page", 1))
+        tasks = await db.get_all_tasks(status=status or None, page=page, page_size=50)
+        return JSONResponse(tasks)
+
+    async def api_task_submit(request: Request) -> JSONResponse:
+        if not task_service:
+            return JSONResponse({"ok": False, "error": "TaskService not available"}, status_code=503)
+        data = await request.json()
+        space_url = data.get("space_url", "").strip()
+        if not space_url:
+            return JSONResponse({"ok": False, "error": "space_url is required"}, status_code=400)
+        try:
+            task_id = await task_service.submit_task(space_url)
+            return JSONResponse({"ok": True, "task_id": task_id})
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    async def api_task_detail(request: Request) -> JSONResponse:
+        task_id = int(request.path_params["task_id"])
+        task = await db.get_task(task_id)
+        if not task:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(dict(task))
+
+    async def api_trigger_login(request: Request) -> JSONResponse:
+        if not task_service:
+            return JSONResponse({"ok": False, "error": "TaskService not available"}, status_code=503)
+        success = await task_service.trigger_qr_login()
+        if success:
+            return JSONResponse({"ok": True, "message": "QR login completed"})
+        return JSONResponse({"ok": False, "error": "QR login failed or timed out"}, status_code=500)
+
+    async def api_task_retry(request: Request) -> JSONResponse:
+        if not task_service:
+            return JSONResponse({"ok": False, "error": "TaskService not available"}, status_code=503)
+        task_id = int(request.path_params["task_id"])
+        task = await db.get_task(task_id)
+        if not task:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        if task["status"] != "failed":
+            return JSONResponse({"ok": False, "error": "Only failed tasks can be retried"}, status_code=400)
+        await db.update_task_status(task_id, "pending", error_message=None, cookie_status="valid")
+        await task_service.submit_task(task["space_url"])
+        return JSONResponse({"ok": True})
+
     return {
         "/": (index, ["GET"]),
         "/api/stats": (api_stats, ["GET"]),
@@ -129,4 +176,9 @@ def create_routes(db, env):
         "/api/settings": (api_settings, ["GET", "POST"]),
         "/api/pick-directory": (api_pick_directory, ["POST"]),
         "/api/directories": (api_list_directories, ["POST"]),
+        "/api/tasks": (api_tasks, ["GET"]),
+        "/api/tasks/submit": (api_task_submit, ["POST"]),
+        "/api/tasks/{task_id}": (api_task_detail, ["GET"]),
+        "/api/tasks/{task_id}/retry": (api_task_retry, ["POST"]),
+        "/api/trigger-login": (api_trigger_login, ["POST"]),
     }
