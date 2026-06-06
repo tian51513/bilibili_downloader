@@ -135,7 +135,6 @@ start.bat                   # Windows 一键启动（自动激活venv+打开浏�
 | `/api/tasks/{id}/url` | POST | 修改URL |
 | `/api/tasks/{id}/delete` | POST | 删除任务 |
 | `/api/creators` | GET | UP主列表 |
-| `/api/sections` | GET | 合集列表 |
 | `/api/tags` | GET | 标签列表 |
 | `/api/settings` | GET/POST | 获取/保存设置 |
 | `/api/cookie/status` | GET | Cookie状态 |

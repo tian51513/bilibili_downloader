@@ -44,7 +44,7 @@ CLI入口 (cli/main.py)
     │
     └─ Web仪表盘 (web/)
         FastAPI + Jinja2 + 原生JS
-        统计卡片 + 状态Tab + UP主/合集/标签筛选 + 下载进度条 + 设置面板
+        统计卡片 + 状态Tab + UP主/标签筛选 + 下载进度条 + 设置面板
         REST API: stats/downloads/creators/sections/tags/settings
         3秒自动刷新
         Web任务管理面板（发布/列表/进度/重试）
@@ -249,7 +249,7 @@ python -m pytest tests/ -v    # 54个测试
 - FastAPI + Jinja2 原生JS（无前端构建工具）
 - 统计卡片（总数/等待/下载中/已完成/已跳过/失败）
 - 状态Tab页切换（全部/下载中/已完成/等待中/已跳过/失败）
-- UP主下拉筛选（显示已下载/总数）+ 合集下拉筛选
+- UP主下拉筛选（显示已下载/总数）
 - 标签多选筛选（OR关系，支持搜索/全选/反选/清除）
 - 下载中视频进度条 + 合并状态显示
 - 统一按钮系统（.btn修饰符，日间/夜间双主题）

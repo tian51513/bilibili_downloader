@@ -468,7 +468,9 @@ class Database:
         total = (await cur_count.fetchone())[0]
         params.extend([page_size, offset])
         cur = await self._conn.execute(
-            f"SELECT t.*, c.name as creator_name, c.avatar_url, t.display_name "
+            f"SELECT t.*, c.name as creator_name, c.avatar_url, t.display_name, "
+            f"(SELECT COALESCE(SUM(d.file_size), 0) FROM download d "
+            f"JOIN video v ON d.video_id = v.id WHERE v.creator_id = t.creator_id AND d.status = 'completed') as total_file_size "
             f"FROM task t LEFT JOIN creator c ON t.creator_id = c.id "
             f"{where} ORDER BY t.created_at DESC LIMIT ? OFFSET ?",
             params,

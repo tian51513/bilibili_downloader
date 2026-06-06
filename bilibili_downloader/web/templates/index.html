@@ -299,9 +299,6 @@
                 <select id="filter-creator" onchange="downloadPage=1;loadDownloads()">
                     <option value="">全部UP主</option>
                 </select>
-                <select id="filter-section" onchange="downloadPage=1;loadDownloads()">
-                    <option value="">全部合集</option>
-                </select>
                 <div class="tag-filter-wrap" id="tag-filter-wrap">
                     <div class="tag-filter-btn" onclick="toggleTagDropdown()">
                         <span>标签筛选</span>
@@ -339,7 +336,6 @@
                             <th style="width:30px"><input type="checkbox" id="dl-select-all" onchange="toggleDlSelectAll(this.checked)"></th>
                             <th>UP主</th>
                             <th>视频标题</th>
-                            <th>合集</th>
                             <th>标签</th>
                             <th>时长</th>
                             <th>分辨率</th>
@@ -378,6 +374,7 @@
                             <th>视频总数</th>
                             <th>已采集</th>
                             <th>已下载</th>
+                            <th>文件大小</th>
                             <th>创建时间</th>
                             <th>错误信息</th>
                             <th>操作</th>
@@ -645,10 +642,8 @@
             // 异步加载播放列表
             try {
                 const creatorId = document.getElementById('filter-creator').value;
-                const sectionName = document.getElementById('filter-section').value;
                 let url = `/api/downloads?status=completed&page_size=9999`;
                 if (creatorId) url += '&creator_id=' + encodeURIComponent(creatorId);
-                if (sectionName) url += '&section_name=' + encodeURIComponent(sectionName);
                 if (selectedTags.size > 0) url += '&tags=' + encodeURIComponent([...selectedTags].join(','));
                 const resp = await fetchJSON(url);
                 const items = resp.items || resp;
@@ -742,9 +737,8 @@
 
         // ========== Filters ==========
         async function loadFilters() {
-            const [creators, sections, tags] = await Promise.all([
+            const [creators, tags] = await Promise.all([
                 fetchJSON('/api/creators'),
-                fetchJSON('/api/sections'),
                 fetchJSON('/api/tags'),
             ]);
             const selC = document.getElementById('filter-creator');
@@ -753,11 +747,6 @@
                 const total = c.video_count || 0;
                 const done = c.completed || 0;
                 selC.innerHTML += `<option value="${c.id}">${escHtml(c.name)} (${done}/${total})</option>`;
-            });
-            const selS = document.getElementById('filter-section');
-            selS.innerHTML = '<option value="">全部合集</option>';
-            sections.forEach(s => {
-                selS.innerHTML += `<option value="${s.section_name}">${s.section_name}</option>`;
             });
             allTags = tags;
             renderTagOptions();
@@ -838,11 +827,9 @@
         async function loadDownloads(page) {
             if (page !== undefined) downloadPage = page;
             const creatorId = document.getElementById('filter-creator').value;
-            const sectionName = document.getElementById('filter-section').value;
             let url = `/api/downloads?page=${downloadPage}&page_size=20`;
             if (currentStatus) url += '&status=' + encodeURIComponent(currentStatus);
             if (creatorId) url += '&creator_id=' + encodeURIComponent(creatorId);
-            if (sectionName) url += '&section_name=' + encodeURIComponent(sectionName);
             if (selectedTags.size > 0) url += '&tags=' + encodeURIComponent([...selectedTags].join(','));
 
             const resp = await fetchJSON(url);
@@ -885,7 +872,6 @@
                     <td><input type="checkbox" class="dl-check" value="${dl.id}" ${dl.status === 'downloading' ? 'disabled' : ''}></td>
                     <td>${avatar}${escHtml(dl.creator_name || '')}</td>
                     <td class="title-cell">${dl.bvid ? `<a href="https://www.bilibili.com/video/${escHtml(dl.bvid)}" target="_blank" title="${escHtml(dl.title || '')}">${escHtml(dl.title || '')}</a>` : escHtml(dl.title || '')}</td>
-                    <td>${escHtml(dl.section_name || '-')}</td>
                     <td>${tagsHtml || '-'}</td>
                     <td>${dl.duration ? formatDuration(dl.duration) : '-'}</td>
                     <td>${escHtml(dl.resolution || '')}</td>
@@ -1203,6 +1189,7 @@
                     <td>${t.total_videos}</td>
                     <td>${t.scraped_videos}</td>
                     <td>${t.downloaded_videos}/${t.total_downloads}</td>
+                    <td>${t.total_file_size ? formatSize(t.total_file_size) : '-'}</td>
                     <td>${timeStr}</td>
                     <td class="error-cell">${errorMsg}</td>
                     <td><div class="task-actions">${loginBtn}${resetBtn}${retryBtn}${pauseBtn}${startBtn}${deleteBtn}</div></td>
