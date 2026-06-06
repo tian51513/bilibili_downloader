@@ -237,6 +237,11 @@ class Database:
         )
         await self._conn.commit()
 
+    async def get_all_creators(self) -> list[dict]:
+        cur = await self._conn.execute("SELECT * FROM creator")
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
     async def get_existing_downloads(self, creator_id: int) -> set:
         cur = await self._conn.execute(
             "SELECT v.remote_id, d.resolution FROM download d "
