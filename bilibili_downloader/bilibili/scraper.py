@@ -10,6 +10,8 @@
 import json
 import logging
 
+import aiohttp
+
 from bilibili_downloader.bilibili.parser import (
     parse_sections,
     parse_space_info,
@@ -194,4 +196,25 @@ class BilibiliScraper:
         }
 
         self._collected[mid] = result
+        return result
+
+    async def collect_with_backfill(self, mid: str, session=None, cookies=None) -> dict:
+        """Collect data with API backfill for completeness."""
+        result = await self.collect(mid)
+        videos = result["videos"]
+
+        if session and cookies:
+            from bilibili_downloader.bilibili.api import BilibiliAPI
+
+            api = BilibiliAPI(session, cookies=cookies)
+            existing_bvids = {v["remote_id"] for v in videos}
+            backfill_videos = await api.fetch_videos_by_api(mid, existing_bvids)
+            if backfill_videos:
+                for v in backfill_videos:
+                    if v["remote_id"] not in existing_bvids:
+                        videos.append(v)
+                        existing_bvids.add(v["remote_id"])
+                logger.info(f"API backfill added {len(backfill_videos)} videos, total now {len(videos)}")
+
+        result["videos"] = videos
         return result

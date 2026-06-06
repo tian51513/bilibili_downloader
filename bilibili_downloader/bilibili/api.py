@@ -95,3 +95,54 @@ class BilibiliAPI:
                 return data.get("code") == 0 and data.get("data", {}).get("isLogin", False)
         except Exception:
             return False
+
+    async def fetch_videos_by_api(
+        self, mid: str, existing_bvids: set[str] | None = None,
+    ) -> list[dict]:
+        """Fetch all videos for a UP主 via arc/search API with WBI signature.
+
+        Used to backfill videos that scrolling didn't collect.
+        """
+        from bilibili_downloader.bilibili.parser import parse_video_list
+        from bilibili_downloader.bilibili.wbi import WbiSigner
+
+        existing_bvids = existing_bvids or set()
+        all_videos: list[dict] = []
+        seen_bvids = set(existing_bvids)
+        page = 1
+        total = None
+
+        signer = await WbiSigner.create(self.session)
+
+        while True:
+            params = signer.sign({
+                "mid": mid,
+                "ps": 30,
+                "pn": page,
+                "order": "pubdate",
+            })
+            url = f"{BILIBILI_API_BASE}/x/space/wbi/arc/search?{urlencode(params)}"
+            async with self.session.get(url, headers=self.headers, timeout=REQUEST_TIMEOUT) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+
+            if data.get("code") != 0:
+                logger.warning(f"[api] arc/search backfill page {page} error: {data.get('message')}")
+                break
+
+            page_data = data["data"]
+            total = page_data.get("page", {}).get("count", 0)
+            new_videos = []
+            for v in parse_video_list(data):
+                if v["remote_id"] not in seen_bvids:
+                    new_videos.append(v)
+                    seen_bvids.add(v["remote_id"])
+
+            all_videos.extend(new_videos)
+            logger.info(f"[api] backfill page {page}: {len(new_videos)} new, seen {len(seen_bvids)}/{total}")
+
+            if len(seen_bvids) >= total:
+                break
+            page += 1
+
+        return all_videos
