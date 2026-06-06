@@ -35,6 +35,9 @@ def parse_video_list(raw: dict) -> list[dict]:
                 duration = int(parts[0]) * 60 + int(parts[1])
             elif len(parts) == 3:
                 duration = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        # tag 字段是逗号分隔的字符串，如 "可爱,纯欲,甜妹"
+        tag_str = v.get("tag", "")
+        tags = [t.strip() for t in tag_str.split(",") if t.strip()] if tag_str else []
         videos.append(
             {
                 "remote_id": v["bvid"],
@@ -42,6 +45,7 @@ def parse_video_list(raw: dict) -> list[dict]:
                 "duration": duration,
                 "pubdate": v.get("created"),
                 "extra": {"cid": v.get("cid"), "aid": v.get("aid")},
+                "tags": tags,
             }
         )
     return videos

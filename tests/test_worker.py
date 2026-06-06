@@ -29,6 +29,7 @@ class TestDownloadWorker:
         )
 
         mock_api = AsyncMock()
+        mock_api.get_video_info.return_value = {"cid": 456, "tags": ["test"]}
         mock_api.get_stream_urls.return_value = {
             "video_url": "http://example.com/video.mp4",
             "audio_url": "http://example.com/audio.mp4",
@@ -93,6 +94,7 @@ class TestDownloadWorker:
         )
 
         mock_api = AsyncMock()
+        mock_api.get_video_info.return_value = {"cid": 456, "tags": []}
         mock_api.get_stream_urls.side_effect = ValueError("code=62002, message=需要充值")
         mock_session = MagicMock()
 

@@ -12,3 +12,16 @@ env/
 *.db
 .idea/
 .vscode/
+
+# Runtime artifacts
+bilibili_cookies.json
+bilibili_settings.json
+downloads/
+
+# Claude Code
+.claude/
+.playwright-mcp/
+
+# Misc
+*.png
+*.txt

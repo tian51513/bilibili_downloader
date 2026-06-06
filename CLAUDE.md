@@ -2,11 +2,12 @@
 
 ## 项目概述
 
-B站UP主视频批量下载器，CLI + 轻量Web仪表盘双模式。Python asyncio异步高并发下载，SQLite本地状态追踪，多平台可扩展架构。
+B站UP主视频批量下载器。两阶段架构：Phase 1 用 Playwright 浏览器爬取数据（绕过B站反爬），Phase 2 用 aiohttp 异步高并发下载视频流。无cookie时自动弹出浏览器扫码登录并缓存，后续运行免登录。CLI + Web 仪表盘双模式，SQLite 本地状态追踪，多平台可扩展。
 
 ## 技术栈
 
 - **语言**: Python 3.11+（开发环境 3.12）
+- **数据采集**: Playwright (Chromium headless browser)
 - **异步框架**: asyncio + aiohttp
 - **Web框架**: FastAPI + Jinja2 + Uvicorn
 - **数据库**: SQLite（aiosqlite 异步驱动）
@@ -17,50 +18,97 @@ B站UP主视频批量下载器，CLI + 轻量Web仪表盘双模式。Python asyn
 
 ## 架构
 
-单进程分层架构，FastAPI与下载Worker共享asyncio事件循环：
+两阶段分离架构，浏览器仅在数据采集阶段运行，下载前关闭释放资源：
 
 ```
 CLI入口 (cli/main.py)
-    ↓
-download_command: 获取UP主信息 → 同步视频列表 → 构建下载队列 → 启动DownloadManager
-    ↓
-DownloadManager (core/manager.py): 信号量控制并发 → asyncio.gather调度Worker池
-    ↓
-DownloadWorker (core/worker.py): 获取流URL(retry_async) → 流式下载 → 更新SQLite状态
-    ↑
-Web仪表盘 (web/): 轮询SQLite → Jinja2渲染统计+任务列表（只读监控，3秒自动刷新）
+    │
+    ├─ Cookie解析 (_resolve_cookies)
+    │   优先级: CLI参数 > 环境变量 > 缓存文件 > 扫码登录
+    │
+    ├─ Phase 1: 数据采集 (Playwright)
+    │   PlaywrightBrowser (browser.py)
+    │     启动Chromium → 注入Cookie → 导航bilibili.com建立会话
+    │   [无Cookie时] _qr_code_login
+    │     headed模式 → 点击登录/导航登录页 → 终端提示扫码 →
+    │     轮询SESSDATA cookie → 保存到bilibili_cookies.json
+    │   BilibiliScraper (bilibili/scraper.py)
+    │     导航UP主空间页 → on_response被动读取API响应 → 滚动加载 → 去重
+    │   关闭浏览器释放资源
+    │
+    ├─ Phase 2: 下载 (aiohttp)
+    │   DownloadManager (core/manager.py)
+    │     信号量控制并发 → asyncio.gather调度Worker池
+    │   DownloadWorker (core/worker.py)
+    │     BilibiliAPI获取流URL(retry_async) → 采集阶段补充cid/标签 → CDN流式下载 → 更新SQLite
+    │
+    └─ Web仪表盘 (web/)
+        FastAPI + Jinja2 + 原生JS
+        统计卡片 + 状态Tab + UP主/合集/标签筛选 + 下载进度条 + 设置面板
+        REST API: stats/downloads/creators/sections/tags/settings
+        3秒自动刷新
 ```
+
+### 数据采集策略（on_response 被动读取）
+
+B站API对非浏览器流量返回反爬错误（-352, -799, 412）。解决方案：
+- 用 Playwright 打开真实浏览器，导航到UP主空间页面
+- 页面自身的JS会正确处理WBI签名并发出API请求
+- 通过 `page.on('response')` 被动读取所有API响应（不拦截不干扰页面）
+- arc/search 的 vlist 包含视频标签（tag字段，逗号分隔）
+- 视频列表通过滚动触发分页加载，用去重bvid计数避免重叠误判
+- 合集视频通过 section/index 响应获取，自动补充投稿列表中缺失的视频
+
+### Cookie机制（4级优先级）
+
+```
+1. CLI参数: --cookie SESSDATA=xxx（最高优先级）
+2. 环境变量: BILIBILI_SESSDATA / BILIBILI_BILI_JCT
+3. 缓存文件: bilibili_cookies.json（扫码登录后自动保存）
+4. 扫码登录: 自动弹出headed浏览器，用户手机APP扫码（超时120秒）
+```
+
+- `--no-cache` 跳过缓存文件，强制重新扫码
+- Cookie过期时scraper报-403，提示使用 `--no-cache` 重新登录
+
+### 流URL获取与视频标签
+
+- `/x/player/playurl` 端点**无需WBI签名**，aiohttp直接请求即可
+- 视频标签来源：采集阶段从 arc/search vlist.tag 字段提取（零额外请求）
+- 下载阶段通过 `/x/web-interface/view` API 补充（采集阶段未获取到时）
 
 ## 模块结构
 
 ```
 bilibili_downloader/
-├── config.py          # 全局配置常量（并发数、超时、分辨率优先级、命名模板、API地址）
+├── config.py          # 配置常量 + load_settings/save_settings（JSON持久化）
 ├── main.py            # 程序入口（委托cli.main）
+├── browser.py         # PlaywrightBrowser — 浏览器生命周期管理 + Cookie文件I/O
 ├── storage/
-│   ├── database.py    # Database类 — SQLite异步CRUD（platform/creator/video/download四表）
-│   └── files.py       # 文件命名模板 + 路径解析 + 非法字符过滤
+│   ├── database.py    # Database类 — SQLite异步CRUD（platform/creator/video/download四表 + 标签）
+│   └── files.py       # 文件命名模板 + 路径解析 + 非法字符过滤（含bvid防重名）
 ├── bilibili/
-│   ├── api.py         # BilibiliAPI类 — B站公开API异步封装
-│   └── parser.py      # 纯函数 — 解析API响应（空间信息/视频列表/合集/DASH流）
+│   ├── api.py         # BilibiliAPI — 获取视频流URL + get_video_info(含标签)
+│   ├── parser.py      # 纯函数 — 解析API响应（空间信息/视频列表(含tag)/合集/DASH流）
+│   └── scraper.py     # BilibiliScraper — Playwright on_response被动采集UP主数据
 ├── core/
-│   ├── manager.py     # DownloadManager类 — 队列构建、Worker池调度、并发信号量
-│   ├── worker.py      # download_video协程 — 单视频下载全流程 + 状态更新
+│   ├── manager.py     # DownloadManager — 队列构建、Worker池调度、并发信号量
+│   ├── worker.py      # download_video — 单视频下载（cid/标签补充 + 流下载 + 状态更新）
 │   └── retry.py       # retry_async — 指数退避重试，自动识别永久错误
 ├── cli/
-│   └── main.py        # argparse命令解析 + download/web子命令 + main()入口
+│   └── main.py        # argparse命令解析 + Cookie解析 + QR登录 + 两阶段流程
 └── web/
-    ├── app.py          # FastAPI应用工厂 + Jinja2 filesizeformat过滤器
-    ├── routes.py       # 4个路由（/ + /api/stats + /api/downloads + /api/downloads/{id}）
+    ├── app.py          # FastAPI应用工厂 + Jinja2 Environment（直接使用，绕过Starlette兼容问题）
+    ├── routes.py       # REST API（stats/downloads/creators/sections/tags/settings）
     └── templates/
-        └── index.html  # 仪表盘HTML（统计卡片 + 下载列表 + 3秒自动刷新）
+        └── index.html  # 仪表盘（统计+Tab+筛选+标签多选+进度条+设置抽屉）
 ```
 
 ## 数据模型
 
 - **platform** — 视频平台（bilibili、youtube...），支持多平台扩展
 - **creator** — 创作者，UNIQUE(platform_id, remote_id)
-- **video** — 视频，UNIQUE(creator_id, remote_id)，extra字段存平台特有数据JSON
+- **video** — 视频，UNIQUE(creator_id, remote_id)，extra存平台数据JSON，tags存标签JSON数组
 - **download** — 下载记录，UNIQUE(video_id, resolution)，状态机: pending → downloading → completed/skipped/failed
 
 ## 关键配置 (config.py)
@@ -75,13 +123,29 @@ bilibili_downloader/
 | DEFAULT_RESOLUTION_PRIORITY | ["720p","480p","1080p","240p"] | 分辨率优先级 |
 | DEFAULT_NAME_TEMPLATE | {title}【{creator}-{section}】 | 文件命名模板 |
 | DEFAULT_DB_PATH | bilibili_downloader.db | SQLite数据库路径 |
+| DEFAULT_COOKIE_CACHE_PATH | bilibili_cookies.json | Cookie缓存文件路径 |
 | DEFAULT_WEB_PORT | 8080 | Web仪表盘端口 |
+| SETTINGS_PATH | bilibili_settings.json | 用户设置持久化文件 |
+
+## Web设置面板
+
+通过 bilibili_settings.json 持久化用户配置，Web面板可修改：
+
+| 设置项 | 说明 | 默认值 |
+|--------|------|--------|
+| max_concurrent_downloads | 并发下载数 | 5 |
+| max_concurrent_api | API并发数 | 10 |
+| resolution_priority | 分辨率优先级 | 720p,480p,1080p,240p |
+| name_template | 文件命名模板 | {title}【{creator}-{section}】 |
+| output_dir | 输出目录 | ./downloads |
+| web_port | Web端口 | 8080 |
 
 ## CLI用法
 
 ```bash
 bilibili-dl <URL...> [options]          # 下载UP主视频
 bilibili-dl web [--port 8080]           # 启动Web仪表盘
+start.bat                              # Windows快捷启动（自动激活venv+打开浏览器）
 
 选项:
   -o, --output DIR       保存目录 (默认: ./downloads)
@@ -90,22 +154,32 @@ bilibili-dl web [--port 8080]           # 启动Web仪表盘
   --dry-run               仅分析不下载
   --force                 忽略已下载记录
   --name-template TPL     自定义文件命名模板
+  --headed                显示浏览器窗口（调试/验证用）
+  --no-cache              不使用缓存的cookie，强制重新登录
+  --cookie NAME=VALUE     B站cookie（如 --cookie SESSDATA=xxx，可多次使用）
 ```
+
+不提供cookie时自动弹出浏览器扫码登录，登录后缓存到 `bilibili_cookies.json`，后续运行自动读取。
+Cookie也可通过环境变量设置：`BILIBILI_SESSDATA`、`BILIBILI_BILI_JCT`。
 
 ## 开发指南
 
 ### 环境搭建
 
 ```bash
-uv venv && source .venv/Scripts/activate  # Windows
+# Windows (uv)
+uv venv && .venv\Scripts\activate
 pip install -e .
+playwright install chromium
+
+# 开发测试依赖
 pip install pytest pytest-asyncio aioresponses
 ```
 
 ### 运行测试
 
 ```bash
-python -m pytest tests/ -v
+python -m pytest tests/ -v    # 54个测试
 ```
 
 ### 代码规范
@@ -114,23 +188,64 @@ python -m pytest tests/ -v
 - Database类所有方法以async def开头
 - 错误处理：网络错误重试，永久错误(code=-404/62002)直接标记skipped/failed
 - 类型标注使用Python 3.10+风格（`str | None`而非`Optional[str]`）
+- Web设置持久化到 bilibili_settings.json，优先级：文件 > config.py默认值
 
 ## 当前版本状态 (V1)
 
-已完成:
-- 多UP主批量下载，自动分页获取全部视频
-- 合集信息提取，文件命名体现合集归属
+### 已完成
+
+**数据采集**
+- Playwright浏览器爬取数据（绕过B站反爬检测）
+- on_response 被动读取API响应（不拦截不干扰页面）
+- QR码扫码登录（自动弹出浏览器，120秒超时）
+- Cookie本地缓存（bilibili_cookies.json，自动读取/保存）
+- Cookie 4级优先级解析（CLI > 环境变量 > 缓存 > 扫码）
+- `--no-cache` 强制重新登录
+- 滚动加载分页视频，去重bvid计数
+- 视频标签提取（arc/search vlist.tag，零额外请求）
+- 合集信息提取，合集视频自动补充投稿列表
+- 人机验证检测，提示--headed模式手动完成
+- 视频列表-403错误时提示登录/重新登录
+- 多UP主批量下载，单个失败不影响其他
+
+**下载引擎**
+- 两阶段架构：浏览器采集 + aiohttp下载
 - 异步高并发下载（信号量控制API/下载并发数）
 - 指数退避重试 + 永久错误识别
-- SQLite状态追踪，跳过已下载/已跳过视频
-- CLI（download/web子命令，--dry-run/--force等）
-- Web仪表盘（统计概览 + 下载列表 + REST API）
+- cid缺失时自动通过API补充
+- 标签缺失时通过 get_video_info 补充
+- 文件名包含bvid防重名冲突
 
-V2待做:
+**数据存储**
+- SQLite状态追踪（platform/creator/video/download四表 + tags字段）
+- 已存在视频自动更新标签（无需 --force）
+- INSERT OR IGNORE + 状态重置（failed/completed/skipped → pending）
+
+**Web仪表盘**
+- FastAPI + Jinja2 原生JS（无前端构建工具）
+- 统计卡片（总数/等待/下载中/已完成/已跳过/失败）
+- 状态Tab页切换（全部/下载中/已完成/等待中/已跳过/失败）
+- UP主下拉筛选 + 合集下拉筛选
+- 标签多选筛选（AND关系）
+- 下载中视频进度条
+- 设置抽屉面板（并发数/分辨率/命名模板/输出目录/端口）
+- 设置持久化（bilibili_settings.json）
+- 3秒自动刷新
+- 9个REST API端点
+
+**工程**
+- 54个单元测试
+- start.bat Windows快捷启动
+- CLAUDE.md 项目上下文
+- 完整架构设计文档
+
+### V2 待做
+
 - 断点续传下载
 - 音视频合并（ffmpeg mux，当前仅下载视频流）
 - 更多平台支持（YouTube等）
 - 下载速度限速
+- 视频采集完整性（当前依赖页面滚动触发分页，可能漏视频）
 
 ## Agent skills
 

@@ -18,6 +18,7 @@ def build_filename(
     title: str,
     creator: str,
     section: str | None,
+    bvid: str = "",
     ext: str = "mp4",
     template: str | None = None,
 ) -> str:
@@ -26,6 +27,8 @@ def build_filename(
     When section is None, the template's ``{section}`` placeholder is replaced
     with an empty string and the hyphen dangling inside the bracket decoration
     (if any) is cleaned up.
+
+    bvid is appended as suffix when present to prevent filename collisions.
     """
     template = template or DEFAULT_NAME_TEMPLATE
     title = sanitize_filename(title)
@@ -37,6 +40,9 @@ def build_filename(
     else:
         filename = template.format(title=title, creator=creator, section="")
         filename = filename.replace("-】", "】")
+
+    if bvid:
+        filename = f"{filename}_{bvid}"
 
     return f"{filename}.{ext}"
 

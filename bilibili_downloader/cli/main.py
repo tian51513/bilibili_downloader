@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import logging
 import re
 import sys
@@ -8,6 +9,7 @@ import aiohttp
 
 from bilibili_downloader.config import (
     BILIBILI_SPACE_URL_PATTERN,
+    DEFAULT_COOKIE_CACHE_PATH,
     DEFAULT_DB_PATH,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_RESOLUTION_PRIORITY,
@@ -19,8 +21,10 @@ from bilibili_downloader.core.manager import DownloadManager
 from bilibili_downloader.storage.database import Database
 from bilibili_downloader.storage.files import build_filename, resolve_save_path
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+QR_LOGIN_TIMEOUT = 120  # seconds
 
 
 def parse_args(argv=None):
@@ -35,6 +39,10 @@ def parse_args(argv=None):
     dl_parser.add_argument("--dry-run", action="store_true", help="仅分析不下载")
     dl_parser.add_argument("--force", action="store_true", help="忽略已下载记录")
     dl_parser.add_argument("--name-template", default=None, help="文件命名模板")
+    dl_parser.add_argument("--headed", action="store_true", help="显示浏览器窗口（调试用）")
+    dl_parser.add_argument("--no-cache", action="store_true", help="不使用缓存的cookie，强制重新登录")
+    dl_parser.add_argument("--cookie", action="append", default=[], metavar="NAME=VALUE",
+                           help="B站cookie，如 --cookie SESSDATA=xxx （也可用环境变量 BILIBILI_SESSDATA）")
 
     web_parser = subparsers.add_parser("web", help="启动Web仪表盘")
     web_parser.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="Web服务端口")
@@ -54,73 +62,207 @@ def extract_mid(url: str) -> str:
     return match.group(1)
 
 
+def _resolve_cookies(cli_cookies: list[dict], args) -> tuple[list[dict], bool]:
+    """解析 cookies 来源：CLI参数 > 环境变量 > 缓存文件 > 扫码登录。
+
+    Returns:
+        (cookies, needs_qr_login) 元组。
+    """
+    from bilibili_downloader.browser import build_cookies_from_env, load_cookies_from_file
+
+    if cli_cookies:
+        logger.info("使用 CLI 参数提供的 cookies")
+        return cli_cookies, False
+
+    env_cookies = build_cookies_from_env()
+    if env_cookies:
+        logger.info("使用环境变量提供的 cookies")
+        return env_cookies, False
+
+    if not args.no_cache:
+        cached = load_cookies_from_file(DEFAULT_COOKIE_CACHE_PATH)
+        if cached:
+            logger.info("使用缓存的 cookies")
+            return cached, False
+
+    logger.info("未找到 cookies（CLI参数、环境变量、缓存均无），将启动扫码登录")
+    return [], True
+
+
+async def _qr_code_login(page) -> list[dict]:
+    """在浏览器中执行B站二维码登录流程。
+
+    前提：page 已导航到 bilibili.com，用户未登录。
+    Returns: 登录成功后浏览器上下文中的所有 .bilibili.com cookies。
+    Raises: TimeoutError 超时未完成扫码。
+    """
+    # 尝试点击页面登录按钮
+    login_selectors = [
+        ".header-login-entry",
+        "a[href*='passport.bilibili.com']",
+        ".login-btn",
+    ]
+    clicked = False
+    for selector in login_selectors:
+        try:
+            btn = page.locator(selector).first
+            if await btn.is_visible(timeout=3000):
+                await btn.click()
+                clicked = True
+                logger.info(f"点击登录按钮: {selector}")
+                break
+        except Exception:
+            continue
+
+    if not clicked:
+        logger.info("未找到登录按钮，导航到登录页")
+        await page.goto("https://passport.bilibili.com/login", wait_until="domcontentloaded")
+
+    # 等待二维码渲染
+    await page.wait_for_timeout(2000)
+
+    print("\n" + "=" * 50)
+    print("  请在浏览器窗口中扫描二维码登录B站")
+    print("  使用B站手机APP扫描，扫描后点击确认")
+    print("=" * 50 + "\n")
+
+    # 轮询检测 SESSDATA cookie
+    context = page.context
+    start = asyncio.get_event_loop().time()
+
+    while True:
+        elapsed = asyncio.get_event_loop().time() - start
+        if elapsed > QR_LOGIN_TIMEOUT:
+            raise TimeoutError(
+                f"二维码登录超时（{QR_LOGIN_TIMEOUT}秒）。请重新运行程序。"
+            )
+
+        cookies = await context.cookies()
+        if any(c["name"] == "SESSDATA" for c in cookies):
+            logger.info("检测到登录成功 (SESSDATA cookie 已获取)")
+            await page.wait_for_timeout(2000)
+            all_cookies = await context.cookies()
+            return [c for c in all_cookies if ".bilibili.com" in c.get("domain", "")]
+
+        await asyncio.sleep(2)
+
+
 async def download_command(args):
     db = Database(DEFAULT_DB_PATH)
     await db.init()
 
-    async with aiohttp.ClientSession() as session:
-        api = await BilibiliAPI.create(session)
-        resolution_priority = [args.resolution] if args.resolution else DEFAULT_RESOLUTION_PRIORITY
+    resolution_priority = [args.resolution] if args.resolution else DEFAULT_RESOLUTION_PRIORITY
 
+    # --- Phase 1: 数据采集（Playwright 浏览器） ---
+    from bilibili_downloader.browser import (
+        BILIBILI_COOKIE_DOMAIN,
+        PlaywrightBrowser,
+        save_cookies_to_file,
+    )
+    from bilibili_downloader.bilibili.scraper import BilibiliScraper
+
+    # 构建 CLI cookies
+    cli_cookies = []
+    for c in args.cookie:
+        if '=' not in c:
+            logger.warning(f"忽略无效 cookie 参数: {c}")
+            continue
+        name, _, value = c.partition('=')
+        cli_cookies.append({"name": name, "value": value, "domain": BILIBILI_COOKIE_DOMAIN, "path": "/"})
+
+    # 解析 cookies 来源
+    resolved_cookies, needs_qr_login = _resolve_cookies(cli_cookies, args)
+    use_headed = args.headed or needs_qr_login
+
+    browser = PlaywrightBrowser(headless=not use_headed, cookies=resolved_cookies or None)
+    await browser.start()
+
+    # 如果需要扫码登录
+    if needs_qr_login:
+        login_cookies = await _qr_code_login(browser.page)
+        save_cookies_to_file(login_cookies, DEFAULT_COOKIE_CACHE_PATH)
+        resolved_cookies = login_cookies
+
+    scraper = BilibiliScraper(browser)
+
+    try:
         for url in args.urls:
-            mid = extract_mid(url)
-            logger.info(f"Processing UP主: {url} (mid={mid})")
+            try:
+                mid = extract_mid(url)
+                logger.info(f"Processing UP主: {url} (mid={mid})")
 
-            platform = await db.get_platform_by_name("bilibili")
-            pid = platform["id"] if platform else await db.insert_platform(name="bilibili", base_url="https://www.bilibili.com")
+                platform = await db.get_platform_by_name("bilibili")
+                pid = platform["id"] if platform else await db.insert_platform(name="bilibili", base_url="https://www.bilibili.com")
 
-            creator = await db.get_creator_by_remote(pid, mid)
-            if not creator:
-                info = await api.get_space_info(mid)
-                cid = await db.insert_creator(platform_id=pid, remote_id=mid, name=info["name"], space_url=url, avatar_url=info.get("avatar_url"))
-            else:
-                cid = creator["id"]
+                creator = await db.get_creator_by_remote(pid, mid)
+                if not creator:
+                    # 通过空间页面采集UP主数据
+                    data = await scraper.collect(mid)
+                    info = data['space_info']
+                    if not info:
+                        raise ValueError(f"无法获取UP主信息: mid={mid}")
+                    cid = await db.insert_creator(platform_id=pid, remote_id=mid, name=info["name"], space_url=url, avatar_url=info.get("avatar_url"))
+                else:
+                    cid = creator["id"]
+                    data = await scraper.collect(mid)
 
-            videos = await api.get_all_videos(mid)
-            sections = await api.get_sections(mid)
-            section_map = {s["remote_id"]: s for s in sections}
+                videos = data['videos']
+                sections = data['sections']
+                section_map = {s["remote_id"]: s for s in sections}
 
-            existing = set()
-            if not args.force:
-                existing = await db.get_existing_downloads(cid)
+                existing = set()
+                if not args.force:
+                    existing = await db.get_existing_downloads(cid)
 
-            new_videos = 0
-            for video_data in videos:
-                remote_id = video_data["remote_id"]
-                sec = section_map.get(remote_id)
-                video = await db.get_video_by_remote(cid, remote_id)
-                if not video:
-                    vid = await db.insert_video(
-                        creator_id=cid, remote_id=remote_id, title=video_data["title"],
-                        duration=video_data.get("duration"), pubdate=video_data.get("pubdate"),
-                        extra=str(video_data.get("extra")),
-                        section_id=sec["section_id"] if sec else None,
-                        section_name=sec["section_name"] if sec else None,
+                new_videos = 0
+                for video_data in videos:
+                    remote_id = video_data["remote_id"]
+                    sec = section_map.get(remote_id)
+                    video = await db.get_video_by_remote(cid, remote_id)
+                    if not video:
+                        vid = await db.insert_video(
+                            creator_id=cid, remote_id=remote_id, title=video_data["title"],
+                            duration=video_data.get("duration"), pubdate=video_data.get("pubdate"),
+                            extra=json.dumps(video_data.get("extra")),
+                            section_id=sec["section_id"] if sec else None,
+                            section_name=sec["section_name"] if sec else None,
+                        )
+                        video = await db.get_video(vid)
+                    # 存储标签（采集阶段直接从 arc/search vlist.tag 获取）
+                    tags = video_data.get("tags", [])
+                    if tags and not video.get("tags"):
+                        await db.update_video_tags(video["id"], tags)
+
+                    if not args.force and (remote_id, resolution_priority[0]) in existing:
+                        continue
+
+                    creator_info = await db.get_creator(cid)
+                    filename = build_filename(
+                        title=video_data["title"], creator=creator_info["name"],
+                        section=sec["section_name"] if sec else None,
+                        bvid=video_data["remote_id"],
+                        template=args.name_template or DEFAULT_NAME_TEMPLATE,
                     )
-                    video = await db.get_video(vid)
+                    save_path = resolve_save_path(args.output, filename)
+                    await db.insert_download(video_id=video["id"], save_path=save_path, resolution=resolution_priority[0])
+                    new_videos += 1
 
-                if not args.force and (remote_id, resolution_priority[0]) in existing:
-                    continue
+                await db.update_creator_sync(cid)
+                logger.info(f"Found {len(videos)} videos, {new_videos} new downloads queued")
+            except Exception as e:
+                logger.error(f"UP主处理失败: {url} — {e}")
+    finally:
+        await browser.close()
 
-                creator_info = await db.get_creator(cid)
-                filename = build_filename(
-                    title=video_data["title"], creator=creator_info["name"],
-                    section=sec["section_name"] if sec else None,
-                    template=args.name_template or DEFAULT_NAME_TEMPLATE,
-                )
-                save_path = resolve_save_path(args.output, filename)
-                await db.insert_download(video_id=video["id"], save_path=save_path, resolution=resolution_priority[0])
-                new_videos += 1
+    if args.dry_run:
+        stats = await db.get_stats()
+        logger.info(f"Dry run complete: {stats}")
+        await db.close()
+        return
 
-            await db.update_creator_sync(cid)
-            logger.info(f"Found {len(videos)} videos, {new_videos} new downloads queued")
-
-        if args.dry_run:
-            stats = await db.get_stats()
-            logger.info(f"Dry run complete: {stats}")
-            await db.close()
-            return
-
+    # --- Phase 2: 下载（aiohttp） ---
+    async with aiohttp.ClientSession() as session:
+        api = BilibiliAPI(session, cookies=resolved_cookies or None)
         manager = DownloadManager(
             db=db, api=api, save_dir=args.output,
             resolution_priority=resolution_priority,
@@ -141,17 +283,31 @@ async def web_command(args):
     await db.init()
     app = create_app(db)
     logger.info(f"Web dashboard starting on http://localhost:{args.port}")
-    await uvicorn.serve(app, host="0.0.0.0", port=args.port, log_level="info")
-    await db.close()
+    config = uvicorn.Config(app, host="0.0.0.0", port=args.port, log_level="info")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 
 def main(argv=None):
     args = parse_args(argv)
-    if args.command == "web":
-        asyncio.run(web_command(args))
-    else:
-        asyncio.run(download_command(args))
+    try:
+        if args.command == "web":
+            asyncio.run(web_command(args))
+        else:
+            asyncio.run(download_command(args))
+    except KeyboardInterrupt:
+        logger.info("已取消")
+        return 130
+    except SystemExit:
+        raise
+    except Exception as e:
+        logger.error(f"{type(e).__name__}: {e}")
+        return 1
     return 0
+
+
+def cli_entry():
+    sys.exit(main(argv))
 
 
 if __name__ == "__main__":

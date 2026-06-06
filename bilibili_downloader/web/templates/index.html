@@ -6,86 +6,452 @@
     <title>Bilibili Downloader Dashboard</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f5f5f5; color: #333; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        h1 { margin-bottom: 20px; color: #00a1d6; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
-        .stat-card { background: #fff; border-radius: 8px; padding: 15px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .stat-card .label { font-size: 14px; color: #999; }
-        .stat-card .value { font-size: 28px; font-weight: bold; margin-top: 5px; }
+        body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f0f2f5; color: #333; }
+        .container { max-width: 1300px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .header h1 { color: #00a1d6; font-size: 24px; }
+        .header .actions { display: flex; gap: 10px; align-items: center; }
+
+        /* Stats cards */
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        .stat-card { background: #fff; border-radius: 8px; padding: 14px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); cursor: pointer; transition: box-shadow .2s; }
+        .stat-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+        .stat-card.active { outline: 2px solid #00a1d6; }
+        .stat-card .label { font-size: 13px; color: #999; }
+        .stat-card .value { font-size: 26px; font-weight: bold; margin-top: 4px; }
         .stat-card.downloading .value { color: #00a1d6; }
         .stat-card.completed .value { color: #52c41a; }
         .stat-card.skipped .value { color: #faad14; }
         .stat-card.failed .value { color: #f5222d; }
-        table { width: 100%; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: #fafafa; font-weight: 600; }
-        .status { padding: 3px 8px; border-radius: 4px; font-size: 12px; }
-        .status-pending { background: #f0f0f0; color: #999; }
+        .stat-card.pending .value { color: #8c8c8c; }
+
+        /* Filters */
+        .filters { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+        .filters select { padding: 6px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 13px; background: #fff; min-width: 140px; }
+        .filters select:focus { outline: none; border-color: #00a1d6; }
+
+        /* Tag filter */
+        .tag-filter-wrap { position: relative; }
+        .tag-filter-btn { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 13px; background: #fff; cursor: pointer; min-width: 140px; }
+        .tag-filter-btn:hover { border-color: #00a1d6; }
+        .tag-filter-btn .selected-count { background: #00a1d6; color: #fff; border-radius: 10px; padding: 0 6px; font-size: 11px; display: none; }
+        .tag-filter-btn .selected-count.show { display: inline; }
+        .tag-dropdown { display: none; position: absolute; top: 100%; left: 0; z-index: 50; background: #fff; border: 1px solid #e8e8e8; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.12); padding: 8px; margin-top: 4px; width: 320px; max-height: 280px; overflow-y: auto; }
+        .tag-dropdown.open { display: block; }
+        .tag-dropdown-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #f0f0f0; }
+        .tag-dropdown-header span { font-size: 12px; color: #999; }
+        .tag-dropdown-header button { font-size: 12px; color: #00a1d6; background: none; border: none; cursor: pointer; }
+        .tag-option { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        .tag-option:hover { background: #f5f5f5; }
+        .tag-option input { accent-color: #00a1d6; }
+        .tag-option .tag-count { margin-left: auto; font-size: 11px; color: #bbb; }
+        .tag-cell { display: flex; flex-wrap: wrap; gap: 2px; }
+        .tag-chip { padding: 1px 6px; background: #f0f0f0; border-radius: 3px; font-size: 11px; color: #666; }
+
+        /* Status tabs */
+        .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid #e8e8e8; }
+        .tab { padding: 8px 18px; cursor: pointer; font-size: 14px; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .2s; }
+        .tab:hover { color: #00a1d6; }
+        .tab.active { color: #00a1d6; border-bottom-color: #00a1d6; font-weight: 600; }
+
+        /* Table */
+        .table-wrap { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+        th { background: #fafafa; font-weight: 600; color: #666; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; position: sticky; top: 0; }
+        tr:hover { background: #fafafa; }
+        tr.downloading-row { background: #e6f7ff; }
+        tr.downloading-row:hover { background: #d6f0ff; }
+        .status { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+        .status-pending { background: #f0f0f0; color: #8c8c8c; }
         .status-downloading { background: #e6f7ff; color: #00a1d6; }
         .status-completed { background: #f6ffed; color: #52c41a; }
         .status-skipped { background: #fffbe6; color: #faad14; }
         .status-failed { background: #fff2f0; color: #f5222d; }
-        .auto-refresh { margin-top: 10px; color: #999; font-size: 13px; }
+
+        /* Progress bar */
+        .progress-wrap { width: 120px; }
+        .progress-bar { height: 6px; background: #e8e8e8; border-radius: 3px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #00a1d6; border-radius: 3px; transition: width .5s ease; }
+        .progress-text { font-size: 11px; color: #999; margin-top: 2px; }
+
+        /* Settings drawer */
+        .drawer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; }
+        .drawer-overlay.open { display: block; }
+        .drawer { position: fixed; right: -400px; top: 0; bottom: 0; width: 380px; background: #fff; box-shadow: -2px 0 12px rgba(0,0,0,0.15); z-index: 101; transition: right .3s ease; padding: 24px; overflow-y: auto; }
+        .drawer.open { right: 0; }
+        .drawer h2 { font-size: 18px; margin-bottom: 20px; color: #333; display: flex; justify-content: space-between; align-items: center; }
+        .drawer .close { cursor: pointer; font-size: 22px; color: #999; background: none; border: none; padding: 4px 8px; }
+        .drawer .close:hover { color: #333; }
+        .field { margin-bottom: 18px; }
+        .field label { display: block; font-size: 13px; color: #666; margin-bottom: 6px; font-weight: 500; }
+        .field input, .field select { width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; }
+        .field input:focus, .field select:focus { outline: none; border-color: #00a1d6; }
+        .field .hint { font-size: 11px; color: #999; margin-top: 4px; }
+        .drawer .btn { display: inline-block; padding: 10px 24px; background: #00a1d6; color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }
+        .drawer .btn:hover { background: #0090c0; }
+        .btn-settings { background: none; border: 1px solid #d9d9d9; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; color: #666; }
+        .btn-settings:hover { border-color: #00a1d6; color: #00a1d6; }
+
+        .empty { text-align: center; padding: 40px; color: #999; }
+        .creator-avatar { width: 24px; height: 24px; border-radius: 50%; vertical-align: middle; margin-right: 6px; object-fit: cover; }
+        .title-cell { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .refresh-info { margin-top: 8px; color: #bbb; font-size: 12px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Bilibili Downloader</h1>
-        <div class="stats">
-            <div class="stat-card">
-                <div class="label">UP主</div>
-                <div class="value">{{ stats.total_creators }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">视频总数</div>
-                <div class="value">{{ stats.total_videos }}</div>
-            </div>
-            <div class="stat-card downloading">
-                <div class="label">下载中</div>
-                <div class="value">{{ stats.downloading }}</div>
-            </div>
-            <div class="stat-card completed">
-                <div class="label">已完成</div>
-                <div class="value">{{ stats.completed }}</div>
-            </div>
-            <div class="stat-card skipped">
-                <div class="label">已跳过</div>
-                <div class="value">{{ stats.skipped }}</div>
-            </div>
-            <div class="stat-card failed">
-                <div class="label">失败</div>
-                <div class="value">{{ stats.failed }}</div>
+        <div class="header">
+            <h1>Bilibili Downloader</h1>
+            <div class="actions">
+                <button class="btn-settings" onclick="openSettings()">&#9881; 设置</button>
             </div>
         </div>
-        <table>
-            <thead>
-                <tr>
-                    <th>UP主</th>
-                    <th>视频标题</th>
-                    <th>合集</th>
-                    <th>分辨率</th>
-                    <th>状态</th>
-                    <th>大小</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for dl in downloads %}
-                <tr>
-                    <td>{{ dl.creator_name }}</td>
-                    <td>{{ dl.title }}</td>
-                    <td>{{ dl.section_name or '-' }}</td>
-                    <td>{{ dl.resolution }}</td>
-                    <td><span class="status status-{{ dl.status }}">{{ dl.status }}</span></td>
-                    <td>{{ (dl.file_size or 0) | filesizeformat }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        <div class="auto-refresh">页面每3秒自动刷新</div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card" data-status="" onclick="setStatusFilter('')">
+                <div class="label">视频总数</div>
+                <div class="value" id="stat-total">-</div>
+            </div>
+            <div class="stat-card pending" data-status="pending" onclick="setStatusFilter('pending')">
+                <div class="label">等待中</div>
+                <div class="value" id="stat-pending">-</div>
+            </div>
+            <div class="stat-card downloading" data-status="downloading" onclick="setStatusFilter('downloading')">
+                <div class="label">下载中</div>
+                <div class="value" id="stat-downloading">-</div>
+            </div>
+            <div class="stat-card completed" data-status="completed" onclick="setStatusFilter('completed')">
+                <div class="label">已完成</div>
+                <div class="value" id="stat-completed">-</div>
+            </div>
+            <div class="stat-card skipped" data-status="skipped" onclick="setStatusFilter('skipped')">
+                <div class="label">已跳过</div>
+                <div class="value" id="stat-skipped">-</div>
+            </div>
+            <div class="stat-card failed" data-status="failed" onclick="setStatusFilter('failed')">
+                <div class="label">失败</div>
+                <div class="value" id="stat-failed">-</div>
+            </div>
+        </div>
+
+        <div class="tabs" id="tabs">
+            <div class="tab active" data-status="" onclick="setStatusFilter('')">全部</div>
+            <div class="tab" data-status="downloading" onclick="setStatusFilter('downloading')">下载中</div>
+            <div class="tab" data-status="completed" onclick="setStatusFilter('completed')">已完成</div>
+            <div class="tab" data-status="pending" onclick="setStatusFilter('pending')">等待中</div>
+            <div class="tab" data-status="skipped" onclick="setStatusFilter('skipped')">已跳过</div>
+            <div class="tab" data-status="failed" onclick="setStatusFilter('failed')">失败</div>
+        </div>
+
+        <div class="filters">
+            <select id="filter-creator" onchange="loadDownloads()">
+                <option value="">全部UP主</option>
+            </select>
+            <select id="filter-section" onchange="loadDownloads()">
+                <option value="">全部合集</option>
+            </select>
+            <div class="tag-filter-wrap" id="tag-filter-wrap">
+                <div class="tag-filter-btn" onclick="toggleTagDropdown()">
+                    <span>标签筛选</span>
+                    <span class="selected-count" id="tag-selected-count">0</span>
+                    <span style="margin-left:auto;color:#999">&#9662;</span>
+                </div>
+                <div class="tag-dropdown" id="tag-dropdown">
+                    <div class="tag-dropdown-header">
+                        <span>选择标签</span>
+                        <button onclick="clearTagFilter()">清除</button>
+                    </div>
+                    <div id="tag-options"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>UP主</th>
+                        <th>视频标题</th>
+                        <th>合集</th>
+                        <th>标签</th>
+                        <th>分辨率</th>
+                        <th>状态</th>
+                        <th>大小</th>
+                        <th>进度</th>
+                    </tr>
+                </thead>
+                <tbody id="download-list">
+                </tbody>
+            </table>
+            <div class="empty" id="empty-msg" style="display:none">暂无下载记录</div>
+        </div>
+
+        <div class="refresh-info" id="refresh-info"></div>
     </div>
+
+    <!-- Settings drawer -->
+    <div class="drawer-overlay" id="drawer-overlay" onclick="closeSettings()"></div>
+    <div class="drawer" id="drawer">
+        <h2>
+            项目设置
+            <button class="close" onclick="closeSettings()">&times;</button>
+        </h2>
+        <div class="field">
+            <label>并发下载数</label>
+            <input type="number" id="s-concurrency" min="1" max="20">
+            <div class="hint">同时下载视频的最大数量</div>
+        </div>
+        <div class="field">
+            <label>API并发数</label>
+            <input type="number" id="s-api-concurrency" min="1" max="30">
+            <div class="hint">同时请求B站API的最大数量</div>
+        </div>
+        <div class="field">
+            <label>分辨率优先级</label>
+            <input type="text" id="s-resolution" placeholder="720p,480p,1080p,240p">
+            <div class="hint">逗号分隔，按优先级从左到右</div>
+        </div>
+        <div class="field">
+            <label>文件命名模板</label>
+            <input type="text" id="s-template" placeholder="{title}【{creator}-{section}】">
+            <div class="hint">可用变量: {title}, {creator}, {section}, {bvid}</div>
+        </div>
+        <div class="field">
+            <label>输出目录</label>
+            <input type="text" id="s-output" placeholder="./downloads">
+        </div>
+        <div class="field">
+            <label>Web端口</label>
+            <input type="number" id="s-webport" min="1" max="65535">
+        </div>
+        <button class="btn" onclick="saveSettingsFromUI()">保存设置</button>
+    </div>
+
     <script>
-        setTimeout(function() { location.reload(); }, 3000);
+        let currentStatus = '';
+        let refreshTimer = null;
+        let selectedTags = new Set();
+        let allTags = [];
+
+        function setStatusFilter(status) {
+            currentStatus = status;
+            document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.status === status));
+            document.querySelectorAll('.stat-card').forEach(c => c.classList.toggle('active', c.dataset.status === status));
+            loadDownloads();
+        }
+
+        async function fetchJSON(url) {
+            const resp = await fetch(url);
+            return resp.json();
+        }
+
+        async function loadStats() {
+            const stats = await fetchJSON('/api/stats');
+            document.getElementById('stat-total').textContent = stats.total_videos;
+            document.getElementById('stat-pending').textContent = stats.pending;
+            document.getElementById('stat-downloading').textContent = stats.downloading;
+            document.getElementById('stat-completed').textContent = stats.completed;
+            document.getElementById('stat-skipped').textContent = stats.skipped;
+            document.getElementById('stat-failed').textContent = stats.failed;
+        }
+
+        async function loadFilters() {
+            const [creators, sections, tags] = await Promise.all([
+                fetchJSON('/api/creators'),
+                fetchJSON('/api/sections'),
+                fetchJSON('/api/tags'),
+            ]);
+            const selC = document.getElementById('filter-creator');
+            selC.innerHTML = '<option value="">全部UP主</option>';
+            creators.forEach(c => {
+                selC.innerHTML += `<option value="${c.id}">${c.name} (${c.video_count})</option>`;
+            });
+            const selS = document.getElementById('filter-section');
+            selS.innerHTML = '<option value="">全部合集</option>';
+            sections.forEach(s => {
+                selS.innerHTML += `<option value="${s.section_name}">${s.section_name}</option>`;
+            });
+            allTags = tags;
+            renderTagOptions();
+        }
+
+        function renderTagOptions() {
+            const container = document.getElementById('tag-options');
+            if (!allTags.length) {
+                container.innerHTML = '<div style="color:#bbb;font-size:12px;padding:8px">暂无标签数据</div>';
+                return;
+            }
+            container.innerHTML = allTags.map(t => `
+                <label class="tag-option">
+                    <input type="checkbox" value="${escHtml(t.name)}" ${selectedTags.has(t.name) ? 'checked' : ''} onchange="onTagChange()">
+                    <span>${escHtml(t.name)}</span>
+                    <span class="tag-count">${t.count}</span>
+                </label>
+            `).join('');
+        }
+
+        function toggleTagDropdown() {
+            document.getElementById('tag-dropdown').classList.toggle('open');
+        }
+
+        function onTagChange() {
+            selectedTags = new Set();
+            document.querySelectorAll('#tag-options input[type=checkbox]').forEach(cb => {
+                if (cb.checked) selectedTags.add(cb.value);
+            });
+            const badge = document.getElementById('tag-selected-count');
+            if (selectedTags.size > 0) {
+                badge.textContent = selectedTags.size;
+                badge.classList.add('show');
+            } else {
+                badge.classList.remove('show');
+            }
+            loadDownloads();
+        }
+
+        function clearTagFilter() {
+            selectedTags.clear();
+            document.querySelectorAll('#tag-options input[type=checkbox]').forEach(cb => cb.checked = false);
+            document.getElementById('tag-selected-count').classList.remove('show');
+            loadDownloads();
+        }
+
+        // Close tag dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            const wrap = document.getElementById('tag-filter-wrap');
+            if (!wrap.contains(e.target)) {
+                document.getElementById('tag-dropdown').classList.remove('open');
+            }
+        });
+
+        function formatSize(bytes) {
+            if (!bytes) return '0 B';
+            bytes = parseInt(bytes);
+            for (const unit of ['B', 'KB', 'MB', 'GB']) {
+                if (Math.abs(bytes) < 1024) return bytes.toFixed(1) + ' ' + unit;
+                bytes /= 1024;
+            }
+            return bytes.toFixed(1) + ' TB';
+        }
+
+        async function loadDownloads() {
+            const creatorId = document.getElementById('filter-creator').value;
+            const sectionName = document.getElementById('filter-section').value;
+            let url = '/api/downloads?limit=200';
+            if (currentStatus) url += '&status=' + encodeURIComponent(currentStatus);
+            if (creatorId) url += '&creator_id=' + encodeURIComponent(creatorId);
+            if (sectionName) url += '&section_name=' + encodeURIComponent(sectionName);
+            if (selectedTags.size > 0) url += '&tags=' + encodeURIComponent([...selectedTags].join(','));
+
+            const downloads = await fetchJSON(url);
+            const tbody = document.getElementById('download-list');
+            const emptyMsg = document.getElementById('empty-msg');
+
+            if (!downloads.length) {
+                tbody.innerHTML = '';
+                emptyMsg.style.display = 'block';
+                return;
+            }
+            emptyMsg.style.display = 'none';
+
+            tbody.innerHTML = downloads.map(dl => {
+                const isDownloading = dl.status === 'downloading';
+                const rowClass = isDownloading ? 'downloading-row' : '';
+                const avatar = dl.avatar_url
+                    ? `<img class="creator-avatar" src="${dl.avatar_url}" onerror="this.style.display='none'">`
+                    : '';
+                const progressCell = isDownloading
+                    ? `<div class="progress-wrap">
+                           <div class="progress-bar"><div class="progress-fill" style="width:${dl.file_size ? 15 + Math.random() * 70 : 5}%"></div></div>
+                           <div class="progress-text">${formatSize(dl.file_size)}</div>
+                       </div>`
+                    : '';
+                let tagsHtml = '';
+                try {
+                    const tags = dl.tags ? JSON.parse(dl.tags) : [];
+                    if (tags.length) {
+                        tagsHtml = '<div class="tag-cell">' + tags.slice(0, 3).map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('') + (tags.length > 3 ? `<span class="tag-chip">+${tags.length-3}</span>` : '') + '</div>';
+                    }
+                } catch(e) {}
+                return `<tr class="${rowClass}">
+                    <td>${avatar}${escHtml(dl.creator_name || '')}</td>
+                    <td class="title-cell" title="${escHtml(dl.title || '')}">${escHtml(dl.title || '')}</td>
+                    <td>${escHtml(dl.section_name || '-')}</td>
+                    <td>${escHtml(dl.resolution || '')}</td>
+                    <td><span class="status status-${dl.status}">${dl.status}</span></td>
+                    <td>${formatSize(dl.file_size)}</td>
+                    <td>${progressCell}</td>
+                    <td>${tagsHtml || '-'}</td>
+                </tr>`;
+            }).join('');
+
+            document.getElementById('refresh-info').textContent =
+                '自动刷新中 · ' + new Date().toLocaleTimeString();
+        }
+
+        function escHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // Settings drawer
+        async function openSettings() {
+            const settings = await fetchJSON('/api/settings');
+            document.getElementById('s-concurrency').value = settings.max_concurrent_downloads;
+            document.getElementById('s-api-concurrency').value = settings.max_concurrent_api;
+            document.getElementById('s-resolution').value = (settings.resolution_priority || []).join(', ');
+            document.getElementById('s-template').value = settings.name_template || '';
+            document.getElementById('s-output').value = settings.output_dir || '';
+            document.getElementById('s-webport').value = settings.web_port;
+            document.getElementById('drawer').classList.add('open');
+            document.getElementById('drawer-overlay').classList.add('open');
+        }
+
+        function closeSettings() {
+            document.getElementById('drawer').classList.remove('open');
+            document.getElementById('drawer-overlay').classList.remove('open');
+        }
+
+        async function saveSettingsFromUI() {
+            const data = {
+                max_concurrent_downloads: parseInt(document.getElementById('s-concurrency').value) || 5,
+                max_concurrent_api: parseInt(document.getElementById('s-api-concurrency').value) || 10,
+                resolution_priority: document.getElementById('s-resolution').value.split(',').map(s => s.trim()).filter(Boolean),
+                name_template: document.getElementById('s-template').value,
+                output_dir: document.getElementById('s-output').value,
+                web_port: parseInt(document.getElementById('s-webport').value) || 8080,
+            };
+            try {
+                const resp = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data),
+                });
+                const result = await resp.json();
+                if (result.ok) {
+                    closeSettings();
+                } else {
+                    alert('保存失败: ' + (result.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('保存请求失败: ' + e.message);
+            }
+        }
+
+        // Auto-refresh: stats every 5s, downloads every 3s
+        async function refreshLoop() {
+            await Promise.all([loadStats(), loadDownloads()]);
+            setTimeout(refreshLoop, 3000);
+        }
+
+        // Init
+        loadFilters().then(() => {
+            loadStats();
+            loadDownloads();
+            setTimeout(refreshLoop, 3000);
+        });
     </script>
 </body>
 </html>

@@ -40,7 +40,8 @@ class DownloadManager:
             for video in queue:
                 filename = build_filename(
                     title=video["title"], creator=creator["name"],
-                    section=video.get("section_name"), template=self.name_template,
+                    section=video.get("section_name"), bvid=video.get("remote_id", ""),
+                    template=self.name_template,
                 )
                 save_path = resolve_save_path(self.save_dir, filename)
                 await self.db.insert_download(
@@ -58,6 +59,7 @@ class DownloadManager:
         for dl in pending:
             video = await self.db.get_video(dl["video_id"])
             if not video:
+                logger.warning(f"download id={dl['id']} 关联的 video_id={dl['video_id']} 不存在，跳过")
                 continue
             creator_name = dl.get("creator_name")
             if not creator_name:
@@ -67,9 +69,11 @@ class DownloadManager:
                 )
                 row = await cur.fetchone()
                 if not row:
+                    logger.warning(f"download id={dl['id']} video_id={dl['video_id']} 找不到对应创作者，跳过")
                     continue
                 creator_name = row[0]
 
+            logger.info(f"开始下载: {video['title']} (bvid={video['remote_id']})")
             tasks.append(download_video(
                 db=self.db, download_id=dl["id"], video=video,
                 creator_name=creator_name, section_name=video.get("section_name"),
@@ -91,7 +95,8 @@ class DownloadManager:
                 creator = await self.db.get_creator(creator_id)
                 filename = build_filename(
                     title=video["title"], creator=creator["name"],
-                    section=video.get("section_name"), template=self.name_template,
+                    section=video.get("section_name"), bvid=video.get("remote_id", ""),
+                    template=self.name_template,
                 )
                 save_path = resolve_save_path(self.save_dir, filename)
                 await self.db.insert_download(video_id=video["id"], save_path=save_path, resolution=self.resolution_priority[0])
