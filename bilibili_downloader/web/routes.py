@@ -87,25 +87,36 @@ def create_routes(db, env, task_service=None):
             return JSONResponse(load_settings())
 
     async def api_pick_directory(request: Request) -> JSONResponse:
-        """Open native directory picker dialog. Returns selected path."""
+        """Open native directory picker dialog via subprocess (avoids tkinter main-thread issue)."""
         import asyncio
-        try:
-            import tkinter as tk
-            from tkinter import filedialog
-        except ImportError:
-            return JSONResponse({"ok": False, "error": "tkinter not available"}, status_code=500)
-
+        import sys
         data = await request.json()
         initial_dir = data.get("current_path", "./downloads")
 
-        def _pick():
-            root = tk.Tk()
-            root.withdraw()
-            result = filedialog.askdirectory(initialdir=initial_dir, title="选择保存目录")
-            root.destroy()
-            return result
+        script = (
+            "import tkinter as tk; from tkinter import filedialog; "
+            "root = tk.Tk(); root.withdraw(); "
+            f"r = filedialog.askdirectory(initialdir={initial_dir!r}, title='选择保存目录'); "
+            "root.destroy(); print(r)"
+        )
 
-        selected = await asyncio.to_thread(_pick)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-c", script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            if proc.returncode != 0:
+                logger.error(f"Directory picker process error: {stderr.decode()}")
+                return JSONResponse({"ok": False, "error": stderr.decode()[:200]}, status_code=500)
+            selected = stdout.decode().strip()
+        except asyncio.TimeoutError:
+            proc.kill()
+            return JSONResponse({"ok": False, "error": "timeout"}, status_code=500)
+        except Exception as e:
+            logger.error(f"Directory picker failed: {e}")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
         if selected:
             return JSONResponse({"ok": True, "path": selected})
         return JSONResponse({"ok": False, "error": "cancelled"})
