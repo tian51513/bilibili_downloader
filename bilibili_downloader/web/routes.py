@@ -27,14 +27,14 @@ def create_routes(db, env):
         section_name = request.query_params.get("section_name")
         tags_param = request.query_params.get("tags")
         tags = [t for t in tags_param.split(",") if t] if tags_param else None
-        limit = int(request.query_params.get("limit", 200))
-        offset = int(request.query_params.get("offset", 0))
+        page = int(request.query_params.get("page", 1))
+        page_size = int(request.query_params.get("page_size", 20))
         downloads = await db.get_all_downloads(
             status=status or None,
             creator_id=int(creator_id) if creator_id else None,
             section_name=section_name or None,
             tags=tags,
-            limit=limit, offset=offset,
+            page=page, page_size=page_size,
         )
         return JSONResponse(downloads)
 

@@ -51,12 +51,13 @@ class DownloadManager:
 
         # Process all pending downloads
         pending = await self.db.get_all_downloads(status="pending")
-        if not pending:
+        pending_items = pending["items"] if isinstance(pending, dict) else pending
+        if not pending_items:
             logger.info("No pending downloads")
             return
 
         tasks = []
-        for dl in pending:
+        for dl in pending_items:
             video = await self.db.get_video(dl["video_id"])
             if not video:
                 logger.warning(f"download id={dl['id']} 关联的 video_id={dl['video_id']} 不存在，跳过")

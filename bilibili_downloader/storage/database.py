@@ -54,6 +54,23 @@ CREATE TABLE IF NOT EXISTS download (
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(video_id, resolution)
 );
+
+CREATE TABLE IF NOT EXISTS task (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform_id         INTEGER NOT NULL REFERENCES platform(id),
+    creator_id          INTEGER,
+    space_url           TEXT NOT NULL,
+    space_uid           TEXT,
+    status              TEXT NOT NULL DEFAULT 'pending',
+    total_videos        INTEGER DEFAULT 0,
+    scraped_videos      INTEGER DEFAULT 0,
+    downloaded_videos   INTEGER DEFAULT 0,
+    total_downloads     INTEGER DEFAULT 0,
+    error_message       TEXT,
+    cookie_status       TEXT DEFAULT 'valid',
+    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -73,6 +90,13 @@ class Database:
             await self._conn.commit()
         except Exception:
             pass  # column already exists
+        # Migration: add audio_url and merge_status to download table
+        for col, col_type in [("audio_url", "TEXT"), ("merge_status", "TEXT DEFAULT NULL")]:
+            try:
+                await self._conn.execute(f"ALTER TABLE download ADD COLUMN {col} {col_type}")
+                await self._conn.commit()
+            except Exception:
+                pass  # column already exists
 
     async def close(self):
         if self._conn:
@@ -304,10 +328,10 @@ class Database:
         return {(row[0], row[1]) for row in rows}
 
     async def get_all_downloads(
-        self, status: str | None = None, limit: int = 100, offset: int = 0,
+        self, status: str | None = None, page: int = 1, page_size: int = 20,
         creator_id: int | None = None, section_name: str | None = None,
         tags: list[str] | None = None,
-    ) -> list[dict]:
+    ) -> dict:
         conditions = []
         params = []
         if status:
@@ -327,7 +351,18 @@ class Database:
             conditions.append(f"({' AND '.join(tag_conds)})")
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        params.extend([limit, offset])
+        offset = (page - 1) * page_size
+        # Count total
+        params_count = params[:]
+        cur_count = await self._conn.execute(
+            f"SELECT COUNT(*) FROM download d "
+            f"JOIN video v ON d.video_id = v.id "
+            f"JOIN creator c ON v.creator_id = c.id "
+            f"{where}", params_count,
+        )
+        total = (await cur_count.fetchone())[0]
+        # Fetch page
+        params.extend([page_size, offset])
         cur = await self._conn.execute(
             f"SELECT d.*, v.title, v.section_name, v.remote_id as bvid, v.tags, "
             f"c.name as creator_name, c.id as creator_id "
@@ -337,7 +372,13 @@ class Database:
             params,
         )
         rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+        return {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size,
+        }
 
     async def get_creators_with_stats(self) -> list[dict]:
         cur = await self._conn.execute(
@@ -376,3 +417,95 @@ class Database:
             )
             result[status] = (await cur.fetchone())[0]
         return result
+
+    # --- Task ---
+
+    async def insert_task(
+        self, platform_id: int, space_url: str, space_uid: str | None = None,
+    ) -> int:
+        cur = await self._conn.execute(
+            "INSERT INTO task (platform_id, space_url, space_uid) VALUES (?, ?, ?)",
+            (platform_id, space_url, space_uid),
+        )
+        await self._conn.commit()
+        return cur.lastrowid
+
+    async def get_task(self, task_id: int) -> dict | None:
+        cur = await self._conn.execute("SELECT * FROM task WHERE id=?", (task_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def get_all_tasks(
+        self, status: str | None = None, page: int = 1, page_size: int = 50,
+    ) -> dict:
+        conditions = []
+        params = []
+        if status:
+            conditions.append("t.status=?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        offset = (page - 1) * page_size
+        params_count = params[:]
+        cur_count = await self._conn.execute(
+            f"SELECT COUNT(*) FROM task t {where}", params_count,
+        )
+        total = (await cur_count.fetchone())[0]
+        params.extend([page_size, offset])
+        cur = await self._conn.execute(
+            f"SELECT t.*, c.name as creator_name, c.avatar_url "
+            f"FROM task t LEFT JOIN creator c ON t.creator_id = c.id "
+            f"{where} ORDER BY t.created_at DESC LIMIT ? OFFSET ?",
+            params,
+        )
+        rows = await cur.fetchall()
+        return {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size,
+        }
+
+    async def update_task_status(
+        self, task_id: int, status: str,
+        total_videos: int | None = None, scraped_videos: int | None = None,
+        downloaded_videos: int | None = None, total_downloads: int | None = None,
+        error_message: str | None = None, creator_id: int | None = None,
+        cookie_status: str | None = None,
+    ):
+        sets = ["status=?"]
+        params: list = [status]
+        now = datetime.now(timezone.utc).isoformat()
+        sets.append("updated_at=?")
+        params.append(now)
+        if total_videos is not None:
+            sets.append("total_videos=?")
+            params.append(total_videos)
+        if scraped_videos is not None:
+            sets.append("scraped_videos=?")
+            params.append(scraped_videos)
+        if downloaded_videos is not None:
+            sets.append("downloaded_videos=?")
+            params.append(downloaded_videos)
+        if total_downloads is not None:
+            sets.append("total_downloads=?")
+            params.append(total_downloads)
+        if error_message is not None:
+            sets.append("error_message=?")
+            params.append(error_message)
+        if creator_id is not None:
+            sets.append("creator_id=?")
+            params.append(creator_id)
+        if cookie_status is not None:
+            sets.append("cookie_status=?")
+            params.append(cookie_status)
+        params.append(task_id)
+        await self._conn.execute(
+            f"UPDATE task SET {', '.join(sets)} WHERE id=?", params,
+        )
+        await self._conn.commit()
+
+    async def get_task_by_url(self, space_url: str) -> dict | None:
+        cur = await self._conn.execute("SELECT * FROM task WHERE space_url=?", (space_url,))
+        row = await cur.fetchone()
+        return dict(row) if row else None

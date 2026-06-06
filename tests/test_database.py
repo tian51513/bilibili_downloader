@@ -161,3 +161,52 @@ class TestDatabase:
         assert stats["total_videos"] == 1
         assert stats["completed"] == 1
         assert stats["skipped"] == 1
+
+    async def test_task_table_exists(self, db):
+        cur = await db._conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task'")
+        row = await cur.fetchone()
+        assert row is not None
+
+    async def test_insert_and_get_task(self, db):
+        pid = await db.insert_platform("bilibili")
+        task_id = await db.insert_task(platform_id=pid, space_url="https://space.bilibili.com/12345", space_uid="12345")
+        task = await db.get_task(task_id)
+        assert task["space_url"] == "https://space.bilibili.com/12345"
+        assert task["status"] == "pending"
+
+    async def test_update_task_status(self, db):
+        pid = await db.insert_platform("bilibili")
+        task_id = await db.insert_task(platform_id=pid, space_url="https://space.bilibili.com/1", space_uid="1")
+        await db.update_task_status(task_id, "scraping", total_videos=41, scraped_videos=10)
+        task = await db.get_task(task_id)
+        assert task["status"] == "scraping"
+        assert task["total_videos"] == 41
+
+    async def test_get_all_tasks(self, db):
+        pid = await db.insert_platform("bilibili")
+        await db.insert_task(platform_id=pid, space_url="https://space.bilibili.com/1", space_uid="1")
+        await db.insert_task(platform_id=pid, space_url="https://space.bilibili.com/2", space_uid="2")
+        result = await db.get_all_tasks()
+        assert len(result["items"]) == 2
+        assert "total" in result
+        assert "page" in result
+
+    async def test_download_table_has_audio_fields(self, db):
+        pid = await db.insert_platform("bilibili")
+        cid = await db.insert_creator(platform_id=pid, remote_id="123", name="Test", space_url="https://space.bilibili.com/123")
+        vid = await db.insert_video(creator_id=cid, remote_id="BV1xx", title="Test Video")
+        dl_id = await db.insert_download(video_id=vid, save_path="/tmp/test.mp4", resolution="720p")
+        cur = await db._conn.execute("SELECT audio_url, merge_status FROM download WHERE id=?", (dl_id,))
+        row = await cur.fetchone()
+        assert row is not None
+
+    async def test_get_all_downloads_paginated(self, db):
+        pid = await db.insert_platform("bilibili")
+        cid = await db.insert_creator(platform_id=pid, remote_id="123", name="Test", space_url="https://space.bilibili.com/123")
+        for i in range(5):
+            vid = await db.insert_video(creator_id=cid, remote_id=f"BV{i}", title=f"Video {i}")
+            await db.insert_download(video_id=vid, save_path=f"/tmp/test{i}.mp4", resolution="720p")
+        result = await db.get_all_downloads(page=1, page_size=2)
+        assert len(result["items"]) == 2
+        assert result["total"] == 5
+        assert result["total_pages"] == 3
