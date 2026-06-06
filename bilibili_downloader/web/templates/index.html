@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bilibili Downloader Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { margin-bottom: 20px; color: #00a1d6; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: #fff; border-radius: 8px; padding: 15px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .stat-card .label { font-size: 14px; color: #999; }
+        .stat-card .value { font-size: 28px; font-weight: bold; margin-top: 5px; }
+        .stat-card.downloading .value { color: #00a1d6; }
+        .stat-card.completed .value { color: #52c41a; }
+        .stat-card.skipped .value { color: #faad14; }
+        .stat-card.failed .value { color: #f5222d; }
+        table { width: 100%; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #fafafa; font-weight: 600; }
+        .status { padding: 3px 8px; border-radius: 4px; font-size: 12px; }
+        .status-pending { background: #f0f0f0; color: #999; }
+        .status-downloading { background: #e6f7ff; color: #00a1d6; }
+        .status-completed { background: #f6ffed; color: #52c41a; }
+        .status-skipped { background: #fffbe6; color: #faad14; }
+        .status-failed { background: #fff2f0; color: #f5222d; }
+        .auto-refresh { margin-top: 10px; color: #999; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Bilibili Downloader</h1>
+        <div class="stats">
+            <div class="stat-card">
+                <div class="label">UP主</div>
+                <div class="value">{{ stats.total_creators }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">视频总数</div>
+                <div class="value">{{ stats.total_videos }}</div>
+            </div>
+            <div class="stat-card downloading">
+                <div class="label">下载中</div>
+                <div class="value">{{ stats.downloading }}</div>
+            </div>
+            <div class="stat-card completed">
+                <div class="label">已完成</div>
+                <div class="value">{{ stats.completed }}</div>
+            </div>
+            <div class="stat-card skipped">
+                <div class="label">已跳过</div>
+                <div class="value">{{ stats.skipped }}</div>
+            </div>
+            <div class="stat-card failed">
+                <div class="label">失败</div>
+                <div class="value">{{ stats.failed }}</div>
+            </div>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>UP主</th>
+                    <th>视频标题</th>
+                    <th>合集</th>
+                    <th>分辨率</th>
+                    <th>状态</th>
+                    <th>大小</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dl in downloads %}
+                <tr>
+                    <td>{{ dl.creator_name }}</td>
+                    <td>{{ dl.title }}</td>
+                    <td>{{ dl.section_name or '-' }}</td>
+                    <td>{{ dl.resolution }}</td>
+                    <td><span class="status status-{{ dl.status }}">{{ dl.status }}</span></td>
+                    <td>{{ (dl.file_size or 0) | filesizeformat }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="auto-refresh">页面每3秒自动刷新</div>
+    </div>
+    <script>
+        setTimeout(function() { location.reload(); }, 3000);
+    </script>
+</body>
+</html>
