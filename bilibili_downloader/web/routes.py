@@ -77,6 +77,47 @@ def create_routes(db, env):
         else:
             return JSONResponse(load_settings())
 
+    async def api_pick_directory(request: Request) -> JSONResponse:
+        """Open native directory picker dialog. Returns selected path."""
+        import asyncio
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+        except ImportError:
+            return JSONResponse({"ok": False, "error": "tkinter not available"}, status_code=500)
+
+        data = await request.json()
+        initial_dir = data.get("current_path", "./downloads")
+
+        def _pick():
+            root = tk.Tk()
+            root.withdraw()
+            result = filedialog.askdirectory(initialdir=initial_dir, title="选择保存目录")
+            root.destroy()
+            return result
+
+        selected = await asyncio.to_thread(_pick)
+        if selected:
+            return JSONResponse({"ok": True, "path": selected})
+        return JSONResponse({"ok": False, "error": "cancelled"})
+
+    async def api_list_directories(request: Request) -> JSONResponse:
+        """List subdirectories of a given path."""
+        from pathlib import Path
+        data = await request.json()
+        path_str = data.get("path", ".")
+        try:
+            p = Path(path_str)
+            if not p.exists():
+                return JSONResponse({"ok": False, "error": "path not found"}, status_code=404)
+            dirs = []
+            for entry in sorted(p.iterdir()):
+                if entry.is_dir() and not entry.name.startswith("."):
+                    dirs.append({"name": entry.name, "path": str(entry.resolve())})
+            return JSONResponse({"ok": True, "directories": dirs, "parent": str(p.resolve()), "has_parent": p.parent != p})
+        except PermissionError:
+            return JSONResponse({"ok": False, "error": "permission denied"}, status_code=403)
+
     return {
         "/": (index, ["GET"]),
         "/api/stats": (api_stats, ["GET"]),
@@ -86,4 +127,6 @@ def create_routes(db, env):
         "/api/sections": (api_sections, ["GET"]),
         "/api/tags": (api_tags, ["GET"]),
         "/api/settings": (api_settings, ["GET", "POST"]),
+        "/api/pick-directory": (api_pick_directory, ["POST"]),
+        "/api/directories": (api_list_directories, ["POST"]),
     }
