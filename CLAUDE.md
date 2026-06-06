@@ -47,6 +47,20 @@ CLI入口 (cli/main.py)
         统计卡片 + 状态Tab + UP主/合集/标签筛选 + 下载进度条 + 设置面板
         REST API: stats/downloads/creators/sections/tags/settings
         3秒自动刷新
+        Web任务管理面板（发布/列表/进度/重试）
+        Cookie自动检测与QR扫码登录
+        双流下载（视频+音频）+ ffmpeg合并
+        断点续传（Range请求）
+        单连接下载限速（最低100KB/s）
+        视频采集API补全（WBI签名arc/search）
+        下载列表分页（20条/页）+ 任务列表分页（50条/页）
+        WebSocket实时进度推送
+        原生目录选择器（tkinter）
+        按平台区分cookie文件
+        TaskService后台任务运行器（串行采集队列+下载调度）
+        WebSocket实时进度推送（/ws端点，消息类型：task_status/scrape_progress/download_progress/login_required/login_success）
+        Cookie自动检测+QR扫码登录（headless检测→失效时弹出headed浏览器→120秒超时）
+        按平台区分cookie文件存储
 ```
 
 ### 数据采集策略（on_response 被动读取）
@@ -100,6 +114,8 @@ bilibili_downloader/
 └── web/
     ├── app.py          # FastAPI应用工厂 + Jinja2 Environment（直接使用，绕过Starlette兼容问题）
     ├── routes.py       # REST API（stats/downloads/creators/sections/tags/settings）
+    ├── task_service.py  # TaskService — 后台任务运行（采集队列+下载调度+Cookie管理）
+    ├── ws_manager.py    # WSManager — WebSocket连接管理与广播
     └── templates/
         └── index.html  # 仪表盘（统计+Tab+筛选+标签多选+进度条+设置抽屉）
 ```
@@ -110,6 +126,7 @@ bilibili_downloader/
 - **creator** — 创作者，UNIQUE(platform_id, remote_id)
 - **video** — 视频，UNIQUE(creator_id, remote_id)，extra存平台数据JSON，tags存标签JSON数组
 - **download** — 下载记录，UNIQUE(video_id, resolution)，状态机: pending → downloading → completed/skipped/failed
+- **task** — 抓取任务，status: pending/scraping/downloading/completed/failed
 
 ## 关键配置 (config.py)
 
@@ -120,6 +137,8 @@ bilibili_downloader/
 | DOWNLOAD_RETRY_COUNT | 3 | 下载重试次数 |
 | RETRY_BACKOFF_BASE | 2 | 重试退避基数(秒) |
 | REQUEST_TIMEOUT | 30 | 请求超时(秒) |
+| MIN_SPEED_LIMIT_KB | 100 | 最低限速 KB/s |
+| DEFAULT_SPEED_LIMIT_MB | 0.0 | 默认限速 MB/s（0=不限） |
 | DEFAULT_RESOLUTION_PRIORITY | ["720p","480p","1080p","240p"] | 分辨率优先级 |
 | DEFAULT_NAME_TEMPLATE | {title}【{creator}-{section}】 | 文件命名模板 |
 | DEFAULT_DB_PATH | bilibili_downloader.db | SQLite数据库路径 |
@@ -139,6 +158,7 @@ bilibili_downloader/
 | name_template | 文件命名模板 | {title}【{creator}-{section}】 |
 | output_dir | 输出目录 | ./downloads |
 | web_port | Web端口 | 8080 |
+| download_speed_limit | 下载限速 MB/s | 0 |
 
 ## CLI用法
 
@@ -215,9 +235,12 @@ python -m pytest tests/ -v    # 54个测试
 - cid缺失时自动通过API补充
 - 标签缺失时通过 get_video_info 补充
 - 文件名包含bvid防重名冲突
+- 双流下载（视频+音频）+ ffmpeg合并
+- 断点续传（Range请求）
+- 单连接下载限速（最低100KB/s）
 
 **数据存储**
-- SQLite状态追踪（platform/creator/video/download四表 + tags字段）
+- SQLite状态追踪（platform/creator/video/download/task五表 + tags字段）
 - 已存在视频自动更新标签（无需 --force）
 - INSERT OR IGNORE + 状态重置（failed/completed/skipped → pending）
 
@@ -228,10 +251,13 @@ python -m pytest tests/ -v    # 54个测试
 - UP主下拉筛选 + 合集下拉筛选
 - 标签多选筛选（AND关系）
 - 下载中视频进度条
-- 设置抽屉面板（并发数/分辨率/命名模板/输出目录/端口）
+- 设置抽屉面板（并发数/分辨率/命名模板/输出目录/端口/限速）
 - 设置持久化（bilibili_settings.json）
 - 3秒自动刷新
 - 9个REST API端点
+- WebSocket实时进度推送（task_status/scrape_progress/download_progress/login_required/login_success）
+- 下载列表分页（20条/页）+ 任务列表分页（50条/页）
+- 原生目录选择器（tkinter）
 
 **工程**
 - 54个单元测试
@@ -239,13 +265,24 @@ python -m pytest tests/ -v    # 54个测试
 - CLAUDE.md 项目上下文
 - 完整架构设计文档
 
+### V2 已完成
+
+- Web任务管理面板（发布/列表/进度/重试）
+- Cookie自动检测与QR扫码登录
+- 双流下载（视频+音频）+ ffmpeg合并
+- 断点续传（Range请求）
+- 单连接下载限速（最低100KB/s）
+- 视频采集API补全（WBI签名arc/search）
+- 下载列表分页（20条/页）+ 任务列表分页（50条/页）
+- WebSocket实时进度推送
+- 原生目录选择器（tkinter）
+- 按平台区分cookie文件
+
 ### V2 待做
 
-- 断点续传下载
-- 音视频合并（ffmpeg mux，当前仅下载视频流）
-- 更多平台支持（YouTube等）
-- 下载速度限速
-- 视频采集完整性（当前依赖页面滚动触发分页，可能漏视频）
+- 多平台支持（YouTube等）
+- 远程访问WebSocket安全
+- 批量任务导入/导出
 
 ## Agent skills
 
