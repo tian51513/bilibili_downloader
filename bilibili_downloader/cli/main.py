@@ -278,10 +278,12 @@ async def download_command(args):
 
 async def web_command(args):
     import uvicorn
-    from bilibili_downloader.web.app import create_app
+    from bilibili_downloader.web.app import create_app, get_ws_manager
+    from bilibili_downloader.web.task_service import TaskService
     db = Database(DEFAULT_DB_PATH)
     await db.init()
-    app = create_app(db)
+    task_service = TaskService(db=db, ws_manager=get_ws_manager())
+    app = create_app(db, task_service=task_service)
     logger.info(f"Web dashboard starting on http://localhost:{args.port}")
     config = uvicorn.Config(app, host="0.0.0.0", port=args.port, log_level="info")
     server = uvicorn.Server(config)
