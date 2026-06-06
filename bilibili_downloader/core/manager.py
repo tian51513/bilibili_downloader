@@ -14,7 +14,8 @@ class DownloadManager:
                  max_concurrent_api: int = MAX_CONCURRENT_API_REQUESTS,
                  name_template: str = DEFAULT_NAME_TEMPLATE,
                  speed_limit_bps: int = 0,
-                 ws_manager=None):
+                 ws_manager=None,
+                 cancel_event=None):
         self.db = db
         self.api = api
         self.save_dir = save_dir
@@ -24,6 +25,7 @@ class DownloadManager:
         self.name_template = name_template
         self.speed_limit_bps = speed_limit_bps
         self.ws_manager = ws_manager
+        self.cancel_event = cancel_event
         self.api_semaphore = asyncio.Semaphore(max_concurrent_api)
         self.download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
 
@@ -53,9 +55,17 @@ class DownloadManager:
                     resolution=self.resolution_priority[0],
                 )
 
-        # Process all pending downloads
-        pending = await self.db.get_all_downloads(status="pending")
-        pending_items = pending["items"] if isinstance(pending, dict) else pending
+        # Process all pending downloads (fetch all pages, not just first page)
+        all_pending: list[dict] = []
+        page = 1
+        while True:
+            pending = await self.db.get_all_downloads(status="pending", page=page, page_size=200)
+            items = pending["items"] if isinstance(pending, dict) else pending
+            all_pending.extend(items)
+            if len(all_pending) >= pending.get("total", 0) or not items:
+                break
+            page += 1
+        pending_items = all_pending
         if not pending_items:
             logger.info("No pending downloads")
             return
@@ -89,7 +99,12 @@ class DownloadManager:
                 download_semaphore=self.download_semaphore,
                 speed_limit_bps=self.speed_limit_bps,
                 ws_manager=self.ws_manager,
+                cancel_event=self.cancel_event,
             ))
+
+            if self.cancel_event and self.cancel_event.is_set():
+                logger.info("Download cancelled, stopping")
+                break
 
         await asyncio.gather(*tasks, return_exceptions=True)
 

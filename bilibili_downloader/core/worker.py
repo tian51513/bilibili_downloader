@@ -34,6 +34,8 @@ async def _download_stream(
     chunk_size: int = 1024 * 1024,
     speed_limit_bps: int = 0,
     existing_size: int = 0,
+    total_size: int = 0,
+    ws_manager=None,
 ) -> int:
     """Download a stream with resume support and optional speed limit.
 
@@ -47,15 +49,23 @@ async def _download_stream(
     async with session.get(url, headers=download_headers) as resp:
         resp.raise_for_status()
         # Determine total size
-        content_range = resp.headers.get("Content-Range", "")
-        if content_range and "/" in content_range:
-            total_size_str = content_range.split("/")[-1]
-            total_size = int(total_size_str) if total_size_str != "*" else 0
-        else:
-            total_size = existing_size + int(resp.headers.get("Content-Length", 0))
+        if not total_size:
+            content_range = resp.headers.get("Content-Range", "")
+            if content_range and "/" in content_range:
+                total_size_str = content_range.split("/")[-1]
+                total_size = int(total_size_str) if total_size_str != "*" else 0
+            else:
+                total_size = existing_size + int(resp.headers.get("Content-Length", 0))
+
+        if total_size > 0:
+            await db._conn.execute(
+                "UPDATE download SET total_size=? WHERE id=?", (total_size, download_id)
+            )
+            await db._conn.commit()
 
         downloaded = existing_size
         mode = "ab" if existing_size > 0 else "wb"
+        progress_counter = 0
         with open(save_path, mode) as f:
             async for chunk in resp.content.iter_chunked(chunk_size):
                 chunk_start = time.monotonic()
@@ -65,6 +75,14 @@ async def _download_stream(
                 await _apply_speed_limit(len(chunk), speed_limit_bps, chunk_elapsed)
                 if downloaded % (chunk_size * 10) == 0 or downloaded == total_size:
                     await db.update_download_progress(download_id, downloaded)
+                progress_counter += 1
+                if progress_counter % 5 == 0 and ws_manager:
+                    await ws_manager.broadcast({
+                        "type": "download_progress",
+                        "download_id": download_id,
+                        "file_size": downloaded,
+                        "total_size": total_size,
+                    })
         return downloaded
 
 
@@ -77,6 +95,12 @@ async def _merge_audio_video(
 ):
     """Merge video and audio streams using ffmpeg."""
     ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        try:
+            from imageio_ffmpeg import get_ffmpeg_exe
+            ffmpeg = get_ffmpeg_exe()
+        except ImportError:
+            pass
     if not ffmpeg:
         logger.warning("ffmpeg not found, skipping merge. Files saved separately.")
         return False
@@ -125,10 +149,19 @@ async def download_video(
     download_semaphore: asyncio.Semaphore,
     speed_limit_bps: int = 0,
     ws_manager=None,
+    cancel_event=None,
 ):
     bvid = video["remote_id"]
     try:
+        if cancel_event and cancel_event.is_set():
+            return
         await db.update_download_status(download_id, "downloading")
+        if ws_manager:
+            await ws_manager.broadcast({
+                "type": "download_progress",
+                "download_id": download_id,
+                "status": "downloading",
+            })
 
         extra = video.get("extra", {})
         if isinstance(extra, str):
@@ -174,6 +207,12 @@ async def download_video(
             except ValueError as e:
                 if "skipped" in str(e) or "62002" in str(e) or "充值" in str(e):
                     await db.update_download_status(download_id, "skipped", str(e))
+                    if ws_manager:
+                        await ws_manager.broadcast({
+                            "type": "download_progress",
+                            "download_id": download_id,
+                            "status": "skipped",
+                        })
                     logger.info(f"Skipped {bvid}: {e}")
                     return
                 raise
@@ -194,11 +233,16 @@ async def download_video(
             logger.info(f"[worker] {bvid} Resuming video from {existing_video_size} bytes")
 
         async with download_semaphore:
-            await _download_stream(
-                session, stream["video_url"], video_tmp, download_id, db,
-                headers=api.headers, speed_limit_bps=speed_limit_bps,
-                existing_size=existing_video_size,
-            )
+            try:
+                await _download_stream(
+                    session, stream["video_url"], video_tmp, download_id, db,
+                    headers=api.headers, speed_limit_bps=speed_limit_bps,
+                    existing_size=existing_video_size,
+                    total_size=stream.get("video_size", 0),
+                    ws_manager=ws_manager,
+                )
+            except Exception as dl_err:
+                raise RuntimeError(f"视频流下载失败: {dl_err}") from dl_err
 
         # 4. Download audio stream with resume + speed limit
         if stream.get("audio_url"):
@@ -207,16 +251,34 @@ async def download_video(
                 existing_audio_size = os.path.getsize(audio_tmp)
                 logger.info(f"[worker] {bvid} Resuming audio from {existing_audio_size} bytes")
             async with download_semaphore:
-                await _download_stream(
-                    session, stream["audio_url"], audio_tmp, download_id, db,
-                    headers=api.headers, speed_limit_bps=speed_limit_bps,
-                    existing_size=existing_audio_size,
-                )
+                try:
+                    await _download_stream(
+                        session, stream["audio_url"], audio_tmp, download_id, db,
+                        headers=api.headers, speed_limit_bps=speed_limit_bps,
+                        existing_size=existing_audio_size,
+                        total_size=stream.get("audio_size", 0),
+                        ws_manager=ws_manager,
+                    )
+                except Exception as dl_err:
+                    raise RuntimeError(f"音频流下载失败: {dl_err}") from dl_err
 
         # 5. Merge audio + video with ffmpeg
         if stream.get("audio_url") and os.path.exists(video_tmp) and os.path.exists(audio_tmp):
+            if ws_manager:
+                await ws_manager.broadcast({
+                    "type": "download_progress",
+                    "download_id": download_id,
+                    "status": "merging",
+                })
             merged = await _merge_audio_video(video_tmp, audio_tmp, save_path, download_id, db)
-        elif not stream.get("audio_url"):
+            if not merged and os.path.exists(video_tmp):
+                # ffmpeg failed or not found — save video only, keep audio separately
+                audio_final = save_path + ".audio.mp4"
+                if not os.path.exists(audio_final):
+                    os.rename(audio_tmp, audio_final)
+                os.rename(video_tmp, save_path)
+                logger.warning(f"[worker] {bvid} ffmpeg不可用，视频已保存为 {save_path}，音频另存为 {audio_final}")
+        elif not stream.get("audio_url") and os.path.exists(video_tmp):
             os.rename(video_tmp, save_path)
 
         # 6. Update final status
@@ -224,10 +286,29 @@ async def download_video(
             final_size = os.path.getsize(save_path)
             await db.update_download_progress(download_id, final_size)
             await db.update_download_status(download_id, "completed")
+            if ws_manager:
+                await ws_manager.broadcast({
+                    "type": "download_progress",
+                    "download_id": download_id,
+                    "status": "completed",
+                    "file_size": final_size,
+                })
             logger.info(f"Completed {filename} ({stream['resolution']}, {final_size} bytes)")
         else:
-            await db.update_download_status(download_id, "failed", "Merge failed, no output file")
+            await db.update_download_status(download_id, "failed", "下载完成但输出文件丢失")
+            if ws_manager:
+                await ws_manager.broadcast({
+                    "type": "download_progress",
+                    "download_id": download_id,
+                    "status": "failed",
+                })
 
     except Exception as e:
         logger.error(f"Failed {bvid}: {e}", exc_info=True)
         await db.update_download_status(download_id, "failed", str(e))
+        if ws_manager:
+            await ws_manager.broadcast({
+                "type": "download_progress",
+                "download_id": download_id,
+                "status": "failed",
+            })

@@ -102,22 +102,23 @@ bilibili_downloader/
 │   ├── database.py    # Database类 — SQLite异步CRUD（platform/creator/video/download四表 + 标签）
 │   └── files.py       # 文件命名模板 + 路径解析 + 非法字符过滤（含bvid防重名）
 ├── bilibili/
-│   ├── api.py         # BilibiliAPI — 获取视频流URL + get_video_info(含标签)
+│   ├── api.py         # BilibiliAPI — 获取视频流URL + get_video_info(含标签) + fetch_videos_by_api(API补全)
 │   ├── parser.py      # 纯函数 — 解析API响应（空间信息/视频列表(含tag)/合集/DASH流）
-│   └── scraper.py     # BilibiliScraper — Playwright on_response被动采集UP主数据
+│   ├── scraper.py     # BilibiliScraper — Playwright on_response被动采集UP主数据
+│   └── wbi.py         # WBI签名鉴权（img_key/sub_key混排 + md5签名）
 ├── core/
-│   ├── manager.py     # DownloadManager — 队列构建、Worker池调度、并发信号量
-│   ├── worker.py      # download_video — 单视频下载（cid/标签补充 + 流下载 + 状态更新）
+│   ├── manager.py     # DownloadManager — 队列构建、Worker池调度、并发信号量、取消事件
+│   ├── worker.py      # download_video — 单视频下载（cid/标签补充 + 双流下载 + ffmpeg合并 + 断点续传 + 限速 + WS广播）
 │   └── retry.py       # retry_async — 指数退避重试，自动识别永久错误
 ├── cli/
 │   └── main.py        # argparse命令解析 + Cookie解析 + QR登录 + 两阶段流程
 └── web/
     ├── app.py          # FastAPI应用工厂 + Jinja2 Environment（直接使用，绕过Starlette兼容问题）
-    ├── routes.py       # REST API（stats/downloads/creators/sections/tags/settings）
-    ├── task_service.py  # TaskService — 后台任务运行（采集队列+下载调度+Cookie管理）
+    ├── routes.py       # REST API（30+端点: stats/downloads/tasks/creators/sections/tags/settings/cookie/视频文件服务）
+    ├── task_service.py  # TaskService — 后台任务运行（串行采集队列+API补全+下载调度+Cookie管理）
     ├── ws_manager.py    # WSManager — WebSocket连接管理与广播
     └── templates/
-        └── index.html  # 仪表盘（统计+Tab+筛选+标签多选+进度条+设置抽屉）
+        └── index.html  # 仪表盘（统计+Tab+筛选+标签多选(OR)+进度条+设置+任务面板+视频播放器）
 ```
 
 ## 数据模型
@@ -125,8 +126,8 @@ bilibili_downloader/
 - **platform** — 视频平台（bilibili、youtube...），支持多平台扩展
 - **creator** — 创作者，UNIQUE(platform_id, remote_id)
 - **video** — 视频，UNIQUE(creator_id, remote_id)，extra存平台数据JSON，tags存标签JSON数组
-- **download** — 下载记录，UNIQUE(video_id, resolution)，状态机: pending → downloading → completed/skipped/failed
-- **task** — 抓取任务，status: pending/scraping/downloading/completed/failed
+- **download** — 下载记录，UNIQUE(video_id, resolution)，状态机: pending → downloading → merging → completed/skipped/failed
+- **task** — 抓取任务，状态机: init → scraping → pending → downloading → completed/paused/failed
 
 ## 关键配置 (config.py)
 
@@ -235,29 +236,33 @@ python -m pytest tests/ -v    # 54个测试
 - cid缺失时自动通过API补充
 - 标签缺失时通过 get_video_info 补充
 - 文件名包含bvid防重名冲突
-- 双流下载（视频+音频）+ ffmpeg合并
-- 断点续传（Range请求）
+- 双流下载（视频+音频）+ ffmpeg合并（合并状态实时显示）
+- 断点续传（Range请求，临时文件.video.tmp/.audio.tmp）
 - 单连接下载限速（最低100KB/s）
 
 **数据存储**
 - SQLite状态追踪（platform/creator/video/download/task五表 + tags字段）
 - 已存在视频自动更新标签（无需 --force）
-- INSERT OR IGNORE + 状态重置（failed/completed/skipped → pending）
+- INSERT OR IGNORE + 状态重置（重置时跳过已完成视频）
 
 **Web仪表盘**
 - FastAPI + Jinja2 原生JS（无前端构建工具）
 - 统计卡片（总数/等待/下载中/已完成/已跳过/失败）
 - 状态Tab页切换（全部/下载中/已完成/等待中/已跳过/失败）
-- UP主下拉筛选 + 合集下拉筛选
-- 标签多选筛选（AND关系）
-- 下载中视频进度条
-- 设置抽屉面板（并发数/分辨率/命名模板/输出目录/端口/限速）
+- UP主下拉筛选（显示已下载/总数）+ 合集下拉筛选
+- 标签多选筛选（OR关系，支持搜索/全选/反选/清除）
+- 下载中视频进度条 + 合并状态显示
+- 统一按钮系统（.btn修饰符，日间/夜间双主题）
+- 设置居中面板（分组+分隔线：下载设置/界面设置/Cookie管理）
 - 设置持久化（bilibili_settings.json）
-- 3秒自动刷新
-- 9个REST API端点
-- WebSocket实时进度推送（task_status/scrape_progress/download_progress/login_required/login_success）
+- WebSocket实时推送（所有状态变化精确驱动UI刷新，无定时轮询）
 - 下载列表分页（20条/页）+ 任务列表分页（50条/页）
+- 单个/批量下载（复选框+全选+下载选中按钮+每行下载按钮）
+- 视频标题可点击跳转B站页面（新标签页）
+- 视频播放器模态框（自动播放+播放列表+上/下一个切换+自动连播）
+- 视频文件服务端点（/api/downloads/{id}/play）
 - 原生目录选择器（tkinter）
+- 30+ REST API端点
 
 **工程**
 - 54个单元测试
@@ -267,16 +272,35 @@ python -m pytest tests/ -v    # 54个测试
 
 ### V2 已完成
 
-- Web任务管理面板（发布/列表/进度/重试）
-- Cookie自动检测与QR扫码登录
-- 双流下载（视频+音频）+ ffmpeg合并
+**任务管理**
+- Web任务面板（多行提交/列表/进度/重试/暂停/强制重抓/编辑URL/删除）
+- 任务状态机：init → scraping → pending → downloading → completed/paused/failed
+- Cookie自动检测 + 失效时QR扫码登录（headless检测 → headed弹出 → 120秒超时）
+- 任务状态自动同步（从子下载记录聚合推导任务状态）
+- 按平台区分cookie文件
+
+**采集增强**
+- 视频采集API补全（WBI签名arc/search主动分页，解决滚动加载不全问题）
+- 重置下载时保留已完成视频，仅补全遗漏 + 重试失败
+
+**下载增强**
+- 双流下载（视频+音频）+ ffmpeg合并（合并状态merging实时显示）
 - 断点续传（Range请求）
 - 单连接下载限速（最低100KB/s）
-- 视频采集API补全（WBI签名arc/search）
+- 下载取消事件（cooperative cancel，优雅停止）
+
+**Web UI**
+- 统一按钮系统（.btn修饰符，日间/夜间双主题适配）
+- WebSocket实时推送（所有状态变化精确驱动，无轮询）
 - 下载列表分页（20条/页）+ 任务列表分页（50条/页）
-- WebSocket实时进度推送
+- 标签筛选：OR关系 + 搜索 + 全选/反选/清除
+- UP主筛选显示已下载/总数进度
+- 单个/批量下载（复选框 + 全选 + 下载选中）
+- 视频标题可点击跳转B站（新标签页）
+- 视频播放器模态框（自动播放 + 动态播放列表 + 上/下一个 + 自动连播）
+- 设置居中面板（分组布局 + 分隔线）
 - 原生目录选择器（tkinter）
-- 按平台区分cookie文件
+- 30+ REST API端点
 
 ### V2 待做
 

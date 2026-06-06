@@ -98,6 +98,18 @@ class Database:
                 await self._conn.commit()
             except Exception:
                 pass  # column already exists
+        # Migration: add total_size to download table
+        try:
+            await self._conn.execute("ALTER TABLE download ADD COLUMN total_size INTEGER")
+            await self._conn.commit()
+        except Exception:
+            pass  # column already exists
+        # Migration: add display_name to task table
+        try:
+            await self._conn.execute("ALTER TABLE task ADD COLUMN display_name TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass  # column already exists
 
     async def close(self):
         if self._conn:
@@ -178,11 +190,13 @@ class Database:
         extra: str | None = None,
         section_id: str | None = None,
         section_name: str | None = None,
+        tags: list[str] | None = None,
     ) -> int:
+        tags_json = json.dumps(tags, ensure_ascii=False) if tags else None
         cur = await self._conn.execute(
             "INSERT INTO video "
-            "(creator_id, remote_id, title, duration, pubdate, extra, section_id, section_name) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(creator_id, remote_id, title, duration, pubdate, extra, section_id, section_name, tags) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 creator_id,
                 remote_id,
@@ -192,6 +206,7 @@ class Database:
                 extra,
                 section_id,
                 section_name,
+                tags_json,
             ),
         )
         await self._conn.commit()
@@ -262,8 +277,8 @@ class Database:
             old_row = await cur2.fetchone()
             await self._conn.execute(
                 "UPDATE download SET status='pending', save_path=?, error_msg=NULL, "
-                "started_at=NULL, finished_at=NULL "
-                "WHERE video_id=? AND resolution=? AND status IN ('failed', 'completed', 'skipped')",
+                "started_at=NULL, finished_at=NULL, file_size=NULL, total_size=NULL "
+                "WHERE video_id=? AND resolution=? AND status IN ('failed', 'skipped')",
                 (save_path, video_id, resolution),
             )
             await self._conn.commit()
@@ -300,7 +315,7 @@ class Database:
             )
         else:
             await self._conn.execute(
-                "UPDATE download SET status=? WHERE id=?",
+                "UPDATE download SET status=?, error_msg=NULL, started_at=NULL, finished_at=NULL, file_size=NULL WHERE id=?",
                 (status, download_id),
             )
         await self._conn.commit()
@@ -349,7 +364,7 @@ class Database:
             for tag in tags:
                 tag_conds.append("v.tags LIKE ?")
                 params.append(f'%"{tag}"%')
-            conditions.append(f"({' AND '.join(tag_conds)})")
+            conditions.append(f"({' OR '.join(tag_conds)})")
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * page_size
@@ -365,7 +380,7 @@ class Database:
         # Fetch page
         params.extend([page_size, offset])
         cur = await self._conn.execute(
-            f"SELECT d.*, v.title, v.section_name, v.remote_id as bvid, v.tags, "
+            f"SELECT d.*, v.title, v.section_name, v.remote_id as bvid, v.tags, v.duration, "
             f"c.name as creator_name, c.id as creator_id "
             f"FROM download d JOIN video v ON d.video_id = v.id "
             f"JOIN creator c ON v.creator_id = c.id "
@@ -453,7 +468,7 @@ class Database:
         total = (await cur_count.fetchone())[0]
         params.extend([page_size, offset])
         cur = await self._conn.execute(
-            f"SELECT t.*, c.name as creator_name, c.avatar_url "
+            f"SELECT t.*, c.name as creator_name, c.avatar_url, t.display_name "
             f"FROM task t LEFT JOIN creator c ON t.creator_id = c.id "
             f"{where} ORDER BY t.created_at DESC LIMIT ? OFFSET ?",
             params,
@@ -472,6 +487,7 @@ class Database:
         total_videos: int | None = None, scraped_videos: int | None = None,
         downloaded_videos: int | None = None, total_downloads: int | None = None,
         error_message: str | None = None, creator_id: int | None = None,
+        display_name: str | None = None,
         cookie_status: str | None = None,
     ):
         sets = ["status=?"]
@@ -500,6 +516,9 @@ class Database:
         if cookie_status is not None:
             sets.append("cookie_status=?")
             params.append(cookie_status)
+        if display_name is not None:
+            sets.append("display_name=?")
+            params.append(display_name)
         params.append(task_id)
         await self._conn.execute(
             f"UPDATE task SET {', '.join(sets)} WHERE id=?", params,
@@ -523,10 +542,78 @@ class Database:
         await self._conn.commit()
 
     async def reset_task_downloads(self, creator_id: int):
-        """Reset all downloads for a creator to pending status (force re-download)."""
+        """Reset non-completed downloads for a creator to pending status (skip completed)."""
         await self._conn.execute(
             "UPDATE download SET status='pending', error_msg=NULL, started_at=NULL, finished_at=NULL, file_size=NULL "
-            "WHERE video_id IN (SELECT id FROM video WHERE creator_id=?)",
+            "WHERE video_id IN (SELECT id FROM video WHERE creator_id=?) AND status != 'completed'",
             (creator_id,),
         )
+        await self._conn.commit()
+
+    async def delete_task(self, task_id: int):
+        """Delete a task and cascade delete its downloads and videos."""
+        await self._conn.execute("DELETE FROM download WHERE video_id IN "
+                                 "(SELECT id FROM video WHERE creator_id = "
+                                 "(SELECT creator_id FROM task WHERE id = ? AND creator_id IS NOT NULL))", (task_id,))
+        await self._conn.execute("DELETE FROM video WHERE creator_id = "
+                                 "(SELECT creator_id FROM task WHERE id = ? AND creator_id IS NOT NULL)", (task_id,))
+        await self._conn.execute("DELETE FROM task WHERE id = ?", (task_id,))
+        await self._conn.commit()
+
+    async def delete_download(self, download_id: int):
+        """Delete a single download record."""
+        await self._conn.execute("DELETE FROM download WHERE id=?", (download_id,))
+        await self._conn.commit()
+
+    async def sync_task_status_from_downloads(self, task_id: int):
+        """根据下载状态同步任务状态。"""
+        task = await self.get_task(task_id)
+        if not task or not task.get("creator_id"):
+            return
+        cid = task["creator_id"]
+        # 统计该 creator 下所有 download 的状态
+        cur = await self._conn.execute(
+            "SELECT status, COUNT(*) as cnt FROM download d "
+            "JOIN video v ON d.video_id = v.id WHERE v.creator_id=? GROUP BY d.status",
+            (cid,),
+        )
+        rows = await cur.fetchall()
+        counts = {row[0]: row[1] for row in rows}
+        total = sum(counts.values())
+        if total == 0:
+            return
+        downloading = counts.get("downloading", 0)
+        completed = counts.get("completed", 0)
+        skipped = counts.get("skipped", 0)
+        failed = counts.get("failed", 0)
+        pending = counts.get("pending", 0)
+
+        if downloading > 0:
+            new_status = "downloading"
+        elif pending == total:
+            new_status = "pending"
+        elif failed == total:
+            new_status = "failed"
+        elif completed + skipped == total:
+            new_status = "completed"
+        elif completed + skipped + failed == total:
+            new_status = "completed"
+        else:
+            new_status = "downloading"
+
+        if new_status != task["status"]:
+            error_msg = None if new_status in ("pending", "downloading") else task.get("error_message")
+            await self.update_task_status(
+                task_id, new_status,
+                downloaded_videos=completed,
+                total_downloads=total,
+                error_message=error_msg,
+            )
+
+    async def clear_all_downloads(self):
+        """Delete all downloads, videos, creators, and tasks."""
+        await self._conn.execute("DELETE FROM download")
+        await self._conn.execute("DELETE FROM video")
+        await self._conn.execute("DELETE FROM creator")
+        await self._conn.execute("DELETE FROM task")
         await self._conn.commit()
