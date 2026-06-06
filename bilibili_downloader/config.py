@@ -7,6 +7,10 @@ from pathlib import Path
 MAX_CONCURRENT_DOWNLOADS = 5
 MAX_CONCURRENT_API_REQUESTS = 10
 
+# Speed limit
+MIN_SPEED_LIMIT_KB = 100  # Minimum speed limit in KB/s
+DEFAULT_SPEED_LIMIT_MB = 0.0  # 0 = no limit, in MB/s
+
 # Retry
 DOWNLOAD_RETRY_COUNT = 3
 RETRY_BACKOFF_BASE = 2  # seconds
@@ -44,6 +48,7 @@ _DEFAULTS = {
     "name_template": DEFAULT_NAME_TEMPLATE,
     "output_dir": "./downloads",
     "web_port": DEFAULT_WEB_PORT,
+    "download_speed_limit": DEFAULT_SPEED_LIMIT_MB,
 }
 
 
