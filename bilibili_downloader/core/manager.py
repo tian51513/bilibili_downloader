@@ -12,7 +12,9 @@ class DownloadManager:
     def __init__(self, db, api, save_dir: str, resolution_priority: list[str] | None = None,
                  max_concurrent_downloads: int = MAX_CONCURRENT_DOWNLOADS,
                  max_concurrent_api: int = MAX_CONCURRENT_API_REQUESTS,
-                 name_template: str = DEFAULT_NAME_TEMPLATE):
+                 name_template: str = DEFAULT_NAME_TEMPLATE,
+                 speed_limit_bps: int = 0,
+                 ws_manager=None):
         self.db = db
         self.api = api
         self.save_dir = save_dir
@@ -20,6 +22,8 @@ class DownloadManager:
         self.max_concurrent_downloads = max_concurrent_downloads
         self.max_concurrent_api = max_concurrent_api
         self.name_template = name_template
+        self.speed_limit_bps = speed_limit_bps
+        self.ws_manager = ws_manager
         self.api_semaphore = asyncio.Semaphore(max_concurrent_api)
         self.download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
 
@@ -83,6 +87,8 @@ class DownloadManager:
                 name_template=self.name_template,
                 api_semaphore=self.api_semaphore,
                 download_semaphore=self.download_semaphore,
+                speed_limit_bps=self.speed_limit_bps,
+                ws_manager=self.ws_manager,
             ))
 
         await asyncio.gather(*tasks, return_exceptions=True)
