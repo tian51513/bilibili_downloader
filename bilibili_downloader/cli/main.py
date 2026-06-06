@@ -39,7 +39,8 @@ def parse_args(argv=None):
     web_parser = subparsers.add_parser("web", help="启动Web仪表盘")
     web_parser.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="Web服务端口")
 
-    argv = argv or []
+    if argv is None:
+        argv = sys.argv[1:]
     if not argv or argv[0] not in ("download", "web"):
         argv = ["download"] + argv
     args = parser.parse_args(argv)
