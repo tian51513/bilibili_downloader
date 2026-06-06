@@ -100,6 +100,11 @@
         /* Action button */
         .action-btn { padding: 4px 10px; background: #00a1d6; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
         .action-btn:hover { background: #0090c0; }
+        .force-btn { background: #faad14; }
+        .force-btn:hover { background: #d48806; }
+        .creator-link { color: #00a1d6; text-decoration: none; }
+        .creator-link:hover { text-decoration: underline; }
+        .task-error { font-size: 11px; color: #f5222d; margin-top:2px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
         /* Login modal */
         .login-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; justify-content: center; align-items: center; }
@@ -600,6 +605,32 @@
             loadTasks(taskPage);
         }
 
+        async function forceTask(id) {
+            if (!confirm('确认强制重新抓取并下载该UP主的所有视频？')) return;
+            await fetch(`/api/tasks/${id}/force`, { method: 'POST' });
+            loadTasks(taskPage);
+        }
+
+        async function editTaskUrl(id, currentUrl) {
+            const newUrl = prompt('修改空间地址：', currentUrl);
+            if (newUrl === null || !newUrl.trim()) return;
+            try {
+                const resp = await fetch(`/api/tasks/${id}/url`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({space_url: newUrl.trim()}),
+                });
+                const result = await resp.json();
+                if (result.ok) {
+                    loadTasks(taskPage);
+                } else {
+                    alert('修改失败: ' + (result.error || ''));
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
         async function loadTasks(page) {
             taskPage = page || 1;
             const resp = await fetchJSON(`/api/tasks?page=${taskPage}&page_size=50`);
@@ -619,17 +650,24 @@
             }
             emptyMsg.style.display = 'none';
             tbody.innerHTML = tasks.map(t => {
+                const nameDisplay = t.creator_name
+                    ? `<a href="javascript:void(0)" class="creator-link" onclick="editTaskUrl(${t.id}, '${escHtml(t.space_url)}')" title="${escHtml(t.space_url)}">${escHtml(t.creator_name)}</a>`
+                    : `<span style="color:#999">${escHtml(t.space_uid || '-')}</span>`;
+                const isActive = t.status === 'completed' || t.status === 'downloading' || t.status === 'scraping';
+                const errorMsg = t.error_message ? `<div class="task-error" title="${escHtml(t.error_message)}">${escHtml(t.error_message)}</div>` : '';
                 const retryBtn = t.status === 'failed'
                     ? `<button class="action-btn" onclick="retryTask(${t.id})">重试</button>` : '';
+                const forceBtn = isActive
+                    ? `<button class="action-btn force-btn" onclick="forceTask(${t.id})">强制</button>` : '';
                 const timeStr = t.created_at ? new Date(t.created_at).toISOString().replace('T', ' ').substring(0, 19) : '-';
                 return `<tr>
-                    <td>${escHtml(t.creator_name || t.space_uid || '-')}</td>
+                    <td>${nameDisplay}</td>
                     <td><span class="status status-${t.status}">${t.status}</span></td>
                     <td>${t.total_videos}</td>
                     <td>${t.scraped_videos}</td>
                     <td>${t.downloaded_videos}/${t.total_downloads}</td>
                     <td>${timeStr}</td>
-                    <td>${retryBtn}</td>
+                    <td>${retryBtn}${forceBtn}${errorMsg}</td>
                 </tr>`;
             }).join('');
         }

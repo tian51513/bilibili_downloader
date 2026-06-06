@@ -33,6 +33,7 @@ class TaskService:
         self._scrape_lock = asyncio.Lock()
         self._scrape_queue: asyncio.Queue = asyncio.Queue()
         self._running = False
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def submit_task(self, space_url: str) -> int:
         """Submit a new scrape task. Returns task_id (existing if duplicate)."""
@@ -56,7 +57,9 @@ class TaskService:
 
         if not self._running:
             self._running = True
-            asyncio.create_task(self._process_queue())
+            task = asyncio.create_task(self._process_queue())
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
         return task_id
 
@@ -83,11 +86,14 @@ class TaskService:
         if not task:
             return
 
+        logger.info(f"[TaskService] 开始执行任务 {task_id}: {task['space_url']}")
+
         settings = load_settings()
 
         # Check cookie validity
         await self.db.update_task_status(task_id, "pending", cookie_status="checking")
         cookie_valid = await self._check_cookie()
+        logger.info(f"[TaskService] 任务 {task_id} Cookie检测结果: {'有效' if cookie_valid else '无效'}")
         if not cookie_valid:
             await self.db.update_task_status(task_id, "pending", cookie_status="login_required")
             await self._broadcast({"type": "login_required", "task_id": task_id, "message": "Cookie已失效，请扫码登录"})
@@ -116,6 +122,11 @@ class TaskService:
             data = await scraper.collect(task["space_uid"])
             space_info = data["space_info"]
             videos = data["videos"]
+
+            if not space_info:
+                logger.warning(f"[TaskService] 任务 {task_id} 未获取到UP主信息 (mid={task['space_uid']})")
+
+            logger.info(f"[TaskService] 任务 {task_id} 采集完成: {len(videos)} 个视频, UP主: {space_info['name'] if space_info else 'N/A'}")
             sections = data["sections"]
             total = len(videos)
 

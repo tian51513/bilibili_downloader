@@ -165,6 +165,38 @@ def create_routes(db, env, task_service=None):
         await task_service.submit_task(task["space_url"])
         return JSONResponse({"ok": True})
 
+    async def api_task_force(request: Request) -> JSONResponse:
+        """Force re-scrape and re-download all videos for a task's creator."""
+        if not task_service:
+            return JSONResponse({"ok": False, "error": "TaskService not available"}, status_code=503)
+        task_id = int(request.path_params["task_id"])
+        task = await db.get_task(task_id)
+        if not task:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        if task.get("creator_id"):
+            await db.reset_task_downloads(task["creator_id"])
+        await db.update_task_status(task_id, "pending", error_message=None, cookie_status="valid",
+                                     total_videos=0, scraped_videos=0, downloaded_videos=0, total_downloads=0)
+        await task_service.submit_task(task["space_url"])
+        return JSONResponse({"ok": True})
+
+    async def api_task_update_url(request: Request) -> JSONResponse:
+        """Update a task's space URL."""
+        task_id = int(request.path_params["task_id"])
+        task = await db.get_task(task_id)
+        if not task:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        data = await request.json()
+        space_url = data.get("space_url", "").strip()
+        if not space_url:
+            return JSONResponse({"ok": False, "error": "space_url is required"}, status_code=400)
+        import re as _re
+        match = _re.search(r"https?://space\.bilibili\.com/(\d+)", space_url)
+        if not match:
+            return JSONResponse({"ok": False, "error": "Invalid Bilibili space URL"}, status_code=400)
+        await db.update_task_url(task_id, space_url, match.group(1))
+        return JSONResponse({"ok": True})
+
     return {
         "/": (index, ["GET"]),
         "/api/stats": (api_stats, ["GET"]),
@@ -180,5 +212,7 @@ def create_routes(db, env, task_service=None):
         "/api/tasks/submit": (api_task_submit, ["POST"]),
         "/api/tasks/{task_id}": (api_task_detail, ["GET"]),
         "/api/tasks/{task_id}/retry": (api_task_retry, ["POST"]),
+        "/api/tasks/{task_id}/force": (api_task_force, ["POST"]),
+        "/api/tasks/{task_id}/url": (api_task_update_url, ["POST"]),
         "/api/trigger-login": (api_trigger_login, ["POST"]),
     }

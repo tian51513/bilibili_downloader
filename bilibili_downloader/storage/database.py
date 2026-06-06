@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 import aiosqlite
 from datetime import datetime, timezone
@@ -509,3 +510,23 @@ class Database:
         cur = await self._conn.execute("SELECT * FROM task WHERE space_url=?", (space_url,))
         row = await cur.fetchone()
         return dict(row) if row else None
+
+    async def update_task_url(self, task_id: int, space_url: str, space_uid: str | None = None):
+        if not space_uid:
+            match = re.search(r"https?://space\.bilibili\.com/(\d+)", space_url)
+            space_uid = match.group(1) if match else None
+        await self._conn.execute(
+            "UPDATE task SET space_url=?, space_uid=?, status='pending', error_message=NULL, "
+            "cookie_status='valid', total_videos=0, scraped_videos=0, downloaded_videos=0, total_downloads=0 WHERE id=?",
+            (space_url, space_uid, task_id),
+        )
+        await self._conn.commit()
+
+    async def reset_task_downloads(self, creator_id: int):
+        """Reset all downloads for a creator to pending status (force re-download)."""
+        await self._conn.execute(
+            "UPDATE download SET status='pending', error_msg=NULL, started_at=NULL, finished_at=NULL, file_size=NULL "
+            "WHERE video_id IN (SELECT id FROM video WHERE creator_id=?)",
+            (creator_id,),
+        )
+        await self._conn.commit()
