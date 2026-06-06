@@ -11,7 +11,11 @@ _LABEL_TO_QID = {v: k for k, v in _QID_TO_LABEL.items()}
 
 
 def parse_space_info(raw: dict) -> dict:
-    d = raw["data"]
+    d = raw.get("data")
+    if not d or "mid" not in d:
+        code = raw.get("code", "unknown")
+        msg = raw.get("message", "unknown error")
+        raise ValueError(f"Invalid space info response: code={code}, message={msg}")
     return {
         "remote_id": str(d["mid"]),
         "name": d["name"],

@@ -59,7 +59,7 @@ async def download_command(args):
     await db.init()
 
     async with aiohttp.ClientSession() as session:
-        api = BilibiliAPI(session)
+        api = await BilibiliAPI.create(session)
         resolution_priority = [args.resolution] if args.resolution else DEFAULT_RESOLUTION_PRIORITY
 
         for url in args.urls:

@@ -131,3 +131,17 @@ V2待做:
 - 音视频合并（ffmpeg mux，当前仅下载视频流）
 - 更多平台支持（YouTube等）
 - 下载速度限速
+
+## Agent skills
+
+### Issue tracker
+
+Local markdown issues under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
