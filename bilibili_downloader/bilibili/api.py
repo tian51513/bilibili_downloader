@@ -83,3 +83,15 @@ class BilibiliAPI:
             logger.debug(f"[api] get_stream_urls bvid={bvid} error response: code={code} message={data.get('message')} data={data}")
             raise ValueError(f"API error: code={code}, message={data.get('message')}")
         return parse_stream_urls(data, priority)
+
+    async def validate_cookie(self) -> bool:
+        """检查当前cookie/session是否仍然有效。"""
+        url = f"{BILIBILI_API_BASE}/x/web-interface/nav"
+        try:
+            async with self.session.get(url, headers=self.headers, timeout=REQUEST_TIMEOUT) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json()
+                return data.get("code") == 0 and data.get("data", {}).get("isLogin", False)
+        except Exception:
+            return False
