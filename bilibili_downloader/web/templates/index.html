@@ -12,6 +12,12 @@
         .header h1 { color: #00a1d6; font-size: 24px; }
         .header .actions { display: flex; gap: 10px; align-items: center; }
 
+        /* Nav tabs */
+        .nav-tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid #e8e8e8; }
+        .nav-tab { padding: 8px 20px; cursor: pointer; font-size: 14px; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+        .nav-tab:hover { color: #00a1d6; }
+        .nav-tab.active { color: #00a1d6; border-bottom-color: #00a1d6; font-weight: 600; }
+
         /* Stats cards */
         .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
         .stat-card { background: #fff; border-radius: 8px; padding: 14px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); cursor: pointer; transition: box-shadow .2s; }
@@ -68,12 +74,40 @@
         .status-completed { background: #f6ffed; color: #52c41a; }
         .status-skipped { background: #fffbe6; color: #faad14; }
         .status-failed { background: #fff2f0; color: #f5222d; }
+        .status-scraping { background: #fff7e6; color: #fa8c16; }
+        .status-queued { background: #f0f0f0; color: #8c8c8c; }
 
         /* Progress bar */
         .progress-wrap { width: 120px; }
         .progress-bar { height: 6px; background: #e8e8e8; border-radius: 3px; overflow: hidden; }
         .progress-fill { height: 100%; background: #00a1d6; border-radius: 3px; transition: width .5s ease; }
         .progress-text { font-size: 11px; color: #999; margin-top: 2px; }
+
+        /* Task panel */
+        .task-submit { display: flex; gap: 10px; margin-bottom: 16px; }
+        .task-submit input { flex: 1; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; }
+        .task-submit input:focus { outline: none; border-color: #00a1d6; }
+        .task-submit button { padding: 8px 20px; background: #00a1d6; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+        .task-submit button:hover { background: #0090c0; }
+
+        /* Pagination */
+        .pagination { display: flex; justify-content: center; gap: 4px; margin-top: 12px; }
+        .pagination button { padding: 4px 10px; border: 1px solid #d9d9d9; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px; }
+        .pagination button.active { background: #00a1d6; color: #fff; border-color: #00a1d6; }
+        .pagination button:disabled { opacity: .4; cursor: default; }
+        .pagination span { padding: 4px 6px; color: #999; }
+
+        /* Action button */
+        .action-btn { padding: 4px 10px; background: #00a1d6; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .action-btn:hover { background: #0090c0; }
+
+        /* Login modal */
+        .login-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; justify-content: center; align-items: center; }
+        .login-modal.show { display: flex; }
+        .login-modal-content { background: #fff; border-radius: 12px; padding: 30px; text-align: center; max-width: 360px; }
+        .login-modal-content h3 { margin-bottom: 12px; color: #f5222d; }
+        .login-modal-content p { color: #666; margin-bottom: 16px; font-size: 14px; }
+        .login-spinner { color: #00a1d6; font-size: 14px; }
 
         /* Settings drawer */
         .drawer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; }
@@ -108,86 +142,134 @@
             </div>
         </div>
 
-        <div class="stats" id="stats">
-            <div class="stat-card" data-status="" onclick="setStatusFilter('')">
-                <div class="label">视频总数</div>
-                <div class="value" id="stat-total">-</div>
-            </div>
-            <div class="stat-card pending" data-status="pending" onclick="setStatusFilter('pending')">
-                <div class="label">等待中</div>
-                <div class="value" id="stat-pending">-</div>
-            </div>
-            <div class="stat-card downloading" data-status="downloading" onclick="setStatusFilter('downloading')">
-                <div class="label">下载中</div>
-                <div class="value" id="stat-downloading">-</div>
-            </div>
-            <div class="stat-card completed" data-status="completed" onclick="setStatusFilter('completed')">
-                <div class="label">已完成</div>
-                <div class="value" id="stat-completed">-</div>
-            </div>
-            <div class="stat-card skipped" data-status="skipped" onclick="setStatusFilter('skipped')">
-                <div class="label">已跳过</div>
-                <div class="value" id="stat-skipped">-</div>
-            </div>
-            <div class="stat-card failed" data-status="failed" onclick="setStatusFilter('failed')">
-                <div class="label">失败</div>
-                <div class="value" id="stat-failed">-</div>
-            </div>
+        <!-- Nav tabs: Download Management / Task Management -->
+        <div class="nav-tabs">
+            <div class="nav-tab active" data-panel="downloads" onclick="switchPanel('downloads')">下载管理</div>
+            <div class="nav-tab" data-panel="tasks" onclick="switchPanel('tasks')">任务管理</div>
         </div>
 
-        <div class="tabs" id="tabs">
-            <div class="tab active" data-status="" onclick="setStatusFilter('')">全部</div>
-            <div class="tab" data-status="downloading" onclick="setStatusFilter('downloading')">下载中</div>
-            <div class="tab" data-status="completed" onclick="setStatusFilter('completed')">已完成</div>
-            <div class="tab" data-status="pending" onclick="setStatusFilter('pending')">等待中</div>
-            <div class="tab" data-status="skipped" onclick="setStatusFilter('skipped')">已跳过</div>
-            <div class="tab" data-status="failed" onclick="setStatusFilter('failed')">失败</div>
-        </div>
-
-        <div class="filters">
-            <select id="filter-creator" onchange="loadDownloads()">
-                <option value="">全部UP主</option>
-            </select>
-            <select id="filter-section" onchange="loadDownloads()">
-                <option value="">全部合集</option>
-            </select>
-            <div class="tag-filter-wrap" id="tag-filter-wrap">
-                <div class="tag-filter-btn" onclick="toggleTagDropdown()">
-                    <span>标签筛选</span>
-                    <span class="selected-count" id="tag-selected-count">0</span>
-                    <span style="margin-left:auto;color:#999">&#9662;</span>
+        <!-- ========== Downloads Panel ========== -->
+        <div id="panel-downloads">
+            <div class="stats" id="stats">
+                <div class="stat-card" data-status="" onclick="setStatusFilter('')">
+                    <div class="label">视频总数</div>
+                    <div class="value" id="stat-total">-</div>
                 </div>
-                <div class="tag-dropdown" id="tag-dropdown">
-                    <div class="tag-dropdown-header">
-                        <span>选择标签</span>
-                        <button onclick="clearTagFilter()">清除</button>
+                <div class="stat-card pending" data-status="pending" onclick="setStatusFilter('pending')">
+                    <div class="label">等待中</div>
+                    <div class="value" id="stat-pending">-</div>
+                </div>
+                <div class="stat-card downloading" data-status="downloading" onclick="setStatusFilter('downloading')">
+                    <div class="label">下载中</div>
+                    <div class="value" id="stat-downloading">-</div>
+                </div>
+                <div class="stat-card completed" data-status="completed" onclick="setStatusFilter('completed')">
+                    <div class="label">已完成</div>
+                    <div class="value" id="stat-completed">-</div>
+                </div>
+                <div class="stat-card skipped" data-status="skipped" onclick="setStatusFilter('skipped')">
+                    <div class="label">已跳过</div>
+                    <div class="value" id="stat-skipped">-</div>
+                </div>
+                <div class="stat-card failed" data-status="failed" onclick="setStatusFilter('failed')">
+                    <div class="label">失败</div>
+                    <div class="value" id="stat-failed">-</div>
+                </div>
+            </div>
+
+            <div class="tabs" id="tabs">
+                <div class="tab active" data-status="" onclick="setStatusFilter('')">全部</div>
+                <div class="tab" data-status="downloading" onclick="setStatusFilter('downloading')">下载中</div>
+                <div class="tab" data-status="completed" onclick="setStatusFilter('completed')">已完成</div>
+                <div class="tab" data-status="pending" onclick="setStatusFilter('pending')">等待中</div>
+                <div class="tab" data-status="skipped" onclick="setStatusFilter('skipped')">已跳过</div>
+                <div class="tab" data-status="failed" onclick="setStatusFilter('failed')">失败</div>
+            </div>
+
+            <div class="filters">
+                <select id="filter-creator" onchange="downloadPage=1;loadDownloads()">
+                    <option value="">全部UP主</option>
+                </select>
+                <select id="filter-section" onchange="downloadPage=1;loadDownloads()">
+                    <option value="">全部合集</option>
+                </select>
+                <div class="tag-filter-wrap" id="tag-filter-wrap">
+                    <div class="tag-filter-btn" onclick="toggleTagDropdown()">
+                        <span>标签筛选</span>
+                        <span class="selected-count" id="tag-selected-count">0</span>
+                        <span style="margin-left:auto;color:#999">&#9662;</span>
                     </div>
-                    <div id="tag-options"></div>
+                    <div class="tag-dropdown" id="tag-dropdown">
+                        <div class="tag-dropdown-header">
+                            <span>选择标签</span>
+                            <button onclick="clearTagFilter()">清除</button>
+                        </div>
+                        <div id="tag-options"></div>
+                    </div>
                 </div>
             </div>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>UP主</th>
+                            <th>视频标题</th>
+                            <th>合集</th>
+                            <th>标签</th>
+                            <th>分辨率</th>
+                            <th>状态</th>
+                            <th>大小</th>
+                            <th>进度</th>
+                        </tr>
+                    </thead>
+                    <tbody id="download-list">
+                    </tbody>
+                </table>
+                <div class="empty" id="empty-msg" style="display:none">暂无下载记录</div>
+            </div>
+
+            <div class="pagination" id="download-pagination"></div>
+            <div class="refresh-info" id="refresh-info"></div>
         </div>
 
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>UP主</th>
-                        <th>视频标题</th>
-                        <th>合集</th>
-                        <th>标签</th>
-                        <th>分辨率</th>
-                        <th>状态</th>
-                        <th>大小</th>
-                        <th>进度</th>
-                    </tr>
-                </thead>
-                <tbody id="download-list">
-                </tbody>
-            </table>
-            <div class="empty" id="empty-msg" style="display:none">暂无下载记录</div>
-        </div>
+        <!-- ========== Tasks Panel ========== -->
+        <div id="panel-tasks" style="display:none">
+            <div class="task-submit">
+                <input type="text" id="task-url" placeholder="输入UP主空间URL，例如 https://space.bilibili.com/12345">
+                <button onclick="submitTask()">发布任务</button>
+            </div>
 
-        <div class="refresh-info" id="refresh-info"></div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>UP主</th>
+                            <th>状态</th>
+                            <th>视频总数</th>
+                            <th>已采集</th>
+                            <th>已下载</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="task-list">
+                    </tbody>
+                </table>
+                <div class="empty" id="task-empty-msg" style="display:none">暂无任务</div>
+            </div>
+
+            <div class="pagination" id="task-pagination"></div>
+        </div>
+    </div>
+
+    <!-- Login modal -->
+    <div class="login-modal" id="login-modal">
+        <div class="login-modal-content">
+            <h3>Cookie已失效</h3>
+            <p>正在弹出浏览器窗口，请使用B站APP扫描二维码登录。</p>
+            <div class="login-spinner" id="login-spinner">等待扫码...</div>
+        </div>
     </div>
 
     <!-- Settings drawer -->
@@ -201,6 +283,11 @@
             <label>并发下载数</label>
             <input type="number" id="s-concurrency" min="1" max="20">
             <div class="hint">同时下载视频的最大数量</div>
+        </div>
+        <div class="field">
+            <label>下载限速 (MB/s)</label>
+            <input type="number" id="s-speed-limit" min="0" step="0.1" value="0">
+            <div class="hint">0 = 不限速，最低 0.1 MB/s (100 KB/s)</div>
         </div>
         <div class="field">
             <label>API并发数</label>
@@ -219,7 +306,10 @@
         </div>
         <div class="field">
             <label>输出目录</label>
-            <input type="text" id="s-output" placeholder="./downloads">
+            <div style="display:flex;gap:8px">
+                <input type="text" id="s-output" placeholder="./downloads" style="flex:1">
+                <button type="button" class="btn" style="padding:8px 14px;white-space:nowrap" onclick="browseDirectory()">浏览</button>
+            </div>
         </div>
         <div class="field">
             <label>Web端口</label>
@@ -229,16 +319,20 @@
     </div>
 
     <script>
+        // ========== State ==========
+        let currentPanel = 'downloads';
         let currentStatus = '';
-        let refreshTimer = null;
+        let downloadPage = 1;
+        let taskPage = 1;
         let selectedTags = new Set();
         let allTags = [];
+        let ws = null;
 
-        function setStatusFilter(status) {
-            currentStatus = status;
-            document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.status === status));
-            document.querySelectorAll('.stat-card').forEach(c => c.classList.toggle('active', c.dataset.status === status));
-            loadDownloads();
+        // ========== Utilities ==========
+        function escHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
         }
 
         async function fetchJSON(url) {
@@ -246,6 +340,69 @@
             return resp.json();
         }
 
+        function formatSize(bytes) {
+            if (!bytes) return '0 B';
+            bytes = parseInt(bytes);
+            for (const unit of ['B', 'KB', 'MB', 'GB']) {
+                if (Math.abs(bytes) < 1024) return bytes.toFixed(1) + ' ' + unit;
+                bytes /= 1024;
+            }
+            return bytes.toFixed(1) + ' TB';
+        }
+
+        // ========== Nav Tabs ==========
+        function switchPanel(panel) {
+            currentPanel = panel;
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.panel === panel));
+            document.getElementById('panel-downloads').style.display = panel === 'downloads' ? '' : 'none';
+            document.getElementById('panel-tasks').style.display = panel === 'tasks' ? '' : 'none';
+            refreshCurrentPanel();
+        }
+
+        // ========== WebSocket ==========
+        function connectWS() {
+            const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${protocol}://${location.host}/ws`);
+            ws.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                if (['task_status', 'scrape_progress', 'download_progress'].includes(msg.type)) {
+                    refreshCurrentPanel();
+                }
+                if (msg.type === 'login_required') showLoginModal();
+                if (msg.type === 'login_success') hideLoginModal();
+            };
+            ws.onclose = () => setTimeout(connectWS, 3000);
+            ws.onerror = () => {};
+        }
+        connectWS();
+
+        // ========== Refresh ==========
+        async function refreshCurrentPanel() {
+            if (currentPanel === 'downloads') {
+                loadStats();
+                loadDownloads();
+            } else {
+                loadTasks();
+            }
+        }
+
+        async function refreshLoop() {
+            await refreshCurrentPanel();
+            setTimeout(refreshLoop, 3000);
+        }
+
+        // ========== Login Modal ==========
+        function showLoginModal() {
+            document.getElementById('login-modal').classList.add('show');
+            document.getElementById('login-spinner').textContent = '等待扫码...';
+            fetch('/api/trigger-login', { method: 'POST' }).catch(() => {});
+        }
+
+        function hideLoginModal() {
+            document.getElementById('login-modal').classList.remove('show');
+        }
+
+        // ========== Stats ==========
         async function loadStats() {
             const stats = await fetchJSON('/api/stats');
             document.getElementById('stat-total').textContent = stats.total_videos;
@@ -256,6 +413,16 @@
             document.getElementById('stat-failed').textContent = stats.failed;
         }
 
+        // ========== Status Tab Filter ==========
+        function setStatusFilter(status) {
+            currentStatus = status;
+            downloadPage = 1;
+            document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.status === status));
+            document.querySelectorAll('.stat-card').forEach(c => c.classList.toggle('active', c.dataset.status === status));
+            loadDownloads();
+        }
+
+        // ========== Filters ==========
         async function loadFilters() {
             const [creators, sections, tags] = await Promise.all([
                 fetchJSON('/api/creators'),
@@ -307,6 +474,7 @@
             } else {
                 badge.classList.remove('show');
             }
+            downloadPage = 1;
             loadDownloads();
         }
 
@@ -314,6 +482,7 @@
             selectedTags.clear();
             document.querySelectorAll('#tag-options input[type=checkbox]').forEach(cb => cb.checked = false);
             document.getElementById('tag-selected-count').classList.remove('show');
+            downloadPage = 1;
             loadDownloads();
         }
 
@@ -325,32 +494,27 @@
             }
         });
 
-        function formatSize(bytes) {
-            if (!bytes) return '0 B';
-            bytes = parseInt(bytes);
-            for (const unit of ['B', 'KB', 'MB', 'GB']) {
-                if (Math.abs(bytes) < 1024) return bytes.toFixed(1) + ' ' + unit;
-                bytes /= 1024;
-            }
-            return bytes.toFixed(1) + ' TB';
-        }
-
-        async function loadDownloads() {
+        // ========== Downloads (paginated) ==========
+        async function loadDownloads(page) {
+            if (page !== undefined) downloadPage = page;
             const creatorId = document.getElementById('filter-creator').value;
             const sectionName = document.getElementById('filter-section').value;
-            let url = '/api/downloads?limit=200';
+            let url = `/api/downloads?page=${downloadPage}&page_size=20`;
             if (currentStatus) url += '&status=' + encodeURIComponent(currentStatus);
             if (creatorId) url += '&creator_id=' + encodeURIComponent(creatorId);
             if (sectionName) url += '&section_name=' + encodeURIComponent(sectionName);
             if (selectedTags.size > 0) url += '&tags=' + encodeURIComponent([...selectedTags].join(','));
 
-            const downloads = await fetchJSON(url);
+            const resp = await fetchJSON(url);
+            const downloads = resp.items || resp;
+            const totalPages = resp.total_pages || 1;
             const tbody = document.getElementById('download-list');
             const emptyMsg = document.getElementById('empty-msg');
 
-            if (!downloads.length) {
+            if (!downloads || !downloads.length) {
                 tbody.innerHTML = '';
                 emptyMsg.style.display = 'block';
+                renderPagination('download-pagination', downloadPage, totalPages, loadDownloads);
                 return;
             }
             emptyMsg.style.display = 'none';
@@ -378,28 +542,103 @@
                     <td>${avatar}${escHtml(dl.creator_name || '')}</td>
                     <td class="title-cell" title="${escHtml(dl.title || '')}">${escHtml(dl.title || '')}</td>
                     <td>${escHtml(dl.section_name || '-')}</td>
+                    <td>${tagsHtml || '-'}</td>
                     <td>${escHtml(dl.resolution || '')}</td>
                     <td><span class="status status-${dl.status}">${dl.status}</span></td>
                     <td>${formatSize(dl.file_size)}</td>
                     <td>${progressCell}</td>
-                    <td>${tagsHtml || '-'}</td>
                 </tr>`;
             }).join('');
 
+            renderPagination('download-pagination', downloadPage, totalPages, loadDownloads);
             document.getElementById('refresh-info').textContent =
                 '自动刷新中 · ' + new Date().toLocaleTimeString();
         }
 
-        function escHtml(s) {
-            const d = document.createElement('div');
-            d.textContent = s;
-            return d.innerHTML;
+        // ========== Pagination ==========
+        function renderPagination(containerId, current, totalPages, onPageChange) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            if (totalPages <= 1) { el.innerHTML = ''; return; }
+            let html = `<button ${current <= 1 ? 'disabled' : ''} onclick="pg('${containerId}',${current - 1})">上一页</button>`;
+            for (let i = 1; i <= totalPages; i++) {
+                if (totalPages > 7 && Math.abs(i - current) > 2 && i !== 1 && i !== totalPages) {
+                    if (i === 2 || i === totalPages - 1) html += '<span>...</span>';
+                    continue;
+                }
+                html += `<button class="${i === current ? 'active' : ''}" onclick="pg('${containerId}',${i})">${i}</button>`;
+            }
+            html += `<button ${current >= totalPages ? 'disabled' : ''} onclick="pg('${containerId}',${current + 1})">下一页</button>`;
+            el.innerHTML = html;
         }
 
-        // Settings drawer
+        function pg(containerId, page) {
+            if (containerId === 'download-pagination') loadDownloads(page);
+            else if (containerId === 'task-pagination') loadTasks(page);
+        }
+
+        // ========== Tasks ==========
+        async function submitTask() {
+            const url = document.getElementById('task-url').value.trim();
+            if (!url) return;
+            const resp = await fetch('/api/tasks/submit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ space_url: url }),
+            });
+            const result = await resp.json();
+            if (result.ok) {
+                document.getElementById('task-url').value = '';
+                loadTasks(1);
+            } else {
+                alert('发布失败: ' + (result.error || ''));
+            }
+        }
+
+        async function retryTask(id) {
+            await fetch(`/api/tasks/${id}/retry`, { method: 'POST' });
+            loadTasks(taskPage);
+        }
+
+        async function loadTasks(page) {
+            taskPage = page || 1;
+            const resp = await fetchJSON(`/api/tasks?page=${taskPage}&page_size=50`);
+            const tasks = resp.items || resp;
+            const totalPages = resp.total_pages || 1;
+            renderTaskList(tasks);
+            renderPagination('task-pagination', taskPage, totalPages, loadTasks);
+        }
+
+        function renderTaskList(tasks) {
+            const tbody = document.getElementById('task-list');
+            const emptyMsg = document.getElementById('task-empty-msg');
+            if (!tasks || !tasks.length) {
+                tbody.innerHTML = '';
+                emptyMsg.style.display = 'block';
+                return;
+            }
+            emptyMsg.style.display = 'none';
+            tbody.innerHTML = tasks.map(t => {
+                const retryBtn = t.status === 'failed'
+                    ? `<button class="action-btn" onclick="retryTask(${t.id})">重试</button>` : '';
+                const timeStr = t.created_at ? new Date(t.created_at).toISOString().replace('T', ' ').substring(0, 19) : '-';
+                return `<tr>
+                    <td>${escHtml(t.creator_name || t.space_uid || '-')}</td>
+                    <td><span class="status status-${t.status}">${t.status}</span></td>
+                    <td>${t.total_videos}</td>
+                    <td>${t.scraped_videos}</td>
+                    <td>${t.downloaded_videos}/${t.total_downloads}</td>
+                    <td>${timeStr}</td>
+                    <td>${retryBtn}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // ========== Settings Drawer ==========
         async function openSettings() {
             const settings = await fetchJSON('/api/settings');
             document.getElementById('s-concurrency').value = settings.max_concurrent_downloads;
+            document.getElementById('s-speed-limit').value = settings.download_speed_limit || 0;
             document.getElementById('s-api-concurrency').value = settings.max_concurrent_api;
             document.getElementById('s-resolution').value = (settings.resolution_priority || []).join(', ');
             document.getElementById('s-template').value = settings.name_template || '';
@@ -417,6 +656,7 @@
         async function saveSettingsFromUI() {
             const data = {
                 max_concurrent_downloads: parseInt(document.getElementById('s-concurrency').value) || 5,
+                download_speed_limit: parseFloat(document.getElementById('s-speed-limit').value) || 0,
                 max_concurrent_api: parseInt(document.getElementById('s-api-concurrency').value) || 10,
                 resolution_priority: document.getElementById('s-resolution').value.split(',').map(s => s.trim()).filter(Boolean),
                 name_template: document.getElementById('s-template').value,
@@ -426,7 +666,7 @@
             try {
                 const resp = await fetch('/api/settings', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data),
                 });
                 const result = await resp.json();
@@ -440,16 +680,24 @@
             }
         }
 
-        // Auto-refresh: stats every 5s, downloads every 3s
-        async function refreshLoop() {
-            await Promise.all([loadStats(), loadDownloads()]);
-            setTimeout(refreshLoop, 3000);
+        // ========== Directory Picker ==========
+        async function browseDirectory() {
+            const current = document.getElementById('s-output').value || './downloads';
+            const resp = await fetch('/api/pick-directory', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ current_path: current }),
+            });
+            const result = await resp.json();
+            if (result.ok) {
+                document.getElementById('s-output').value = result.path;
+            }
         }
 
-        // Init
+        // ========== Init ==========
         loadFilters().then(() => {
             loadStats();
-            loadDownloads();
+            loadDownloads(1);
             setTimeout(refreshLoop, 3000);
         });
     </script>
