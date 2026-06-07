@@ -71,7 +71,8 @@
         .tag-option .tag-count { margin-left: auto; font-size: 11px; color: var(--text-muted); }
         .tag-cell { display: flex; flex-wrap: nowrap; gap: 2px; overflow: hidden; }
         .tag-cell:hover { flex-wrap: wrap; }
-        .tag-chip { padding: 1px 6px; background: var(--bg-tag); border-radius: 3px; font-size: 11px; color: var(--text-secondary); }
+        .tag-chip { padding: 1px 6px; background: var(--bg-tag); border-radius: 3px; font-size: 11px; color: var(--text-secondary); cursor: pointer; }
+        .tag-chip:hover { background: var(--accent); color: #fff; }
 
         /* Status tabs */
         .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid var(--border); }
@@ -837,6 +838,19 @@
             loadDownloads();
         }
 
+        function clickListTag(tag) {
+            selectedTags.clear();
+            selectedTags.add(tag);
+            document.querySelectorAll('#tag-options input[type=checkbox]').forEach(cb => {
+                cb.checked = (cb.value === tag);
+            });
+            const badge = document.getElementById('tag-selected-count');
+            badge.textContent = '1';
+            badge.classList.add('show');
+            downloadPage = 1;
+            loadDownloads();
+        }
+
         function selectAllTags() {
             document.querySelectorAll('#tag-options input[type=checkbox]').forEach(cb => cb.checked = true);
             onTagChange();
@@ -920,7 +934,7 @@
                 try {
                     const tags = dl.tags ? JSON.parse(dl.tags) : [];
                     if (tags.length) {
-                        tagsHtml = '<div class="tag-cell">' + tags.slice(0, 3).map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('') + (tags.length > 3 ? `<span class="tag-chip">+${tags.length-3}</span>` : '') + '</div>';
+                        tagsHtml = '<div class="tag-cell">' + tags.slice(0, 3).map(t => `<span class="tag-chip" onclick="clickListTag('${escAttr(t)}')" title="点击筛选: ${escAttr(t)}">${escHtml(t)}</span>`).join('') + (tags.length > 3 ? `<span class="tag-chip">+${tags.length-3}</span>` : '') + '</div>';
                     }
                 } catch(e) {}
                 return `<tr class="${rowClass}" data-dl-id="${dl.id}">
