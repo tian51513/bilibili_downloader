@@ -284,7 +284,7 @@ async def download_video(
         # 6. Update final status
         if os.path.exists(save_path):
             final_size = os.path.getsize(save_path)
-            await db.update_download_progress(download_id, final_size)
+            await db.update_download_progress(download_id, final_size, stream["resolution"])
             await db.update_download_status(download_id, "completed")
             if ws_manager:
                 await ws_manager.broadcast({

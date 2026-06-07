@@ -320,11 +320,17 @@ class Database:
             )
         await self._conn.commit()
 
-    async def update_download_progress(self, download_id: int, file_size: int):
-        await self._conn.execute(
-            "UPDATE download SET file_size=? WHERE id=?",
-            (file_size, download_id),
-        )
+    async def update_download_progress(self, download_id: int, file_size: int, resolution: str | None = None):
+        if resolution:
+            await self._conn.execute(
+                "UPDATE download SET file_size=?, resolution=? WHERE id=?",
+                (file_size, resolution, download_id),
+            )
+        else:
+            await self._conn.execute(
+                "UPDATE download SET file_size=? WHERE id=?",
+                (file_size, download_id),
+            )
         await self._conn.commit()
 
     async def get_all_creators(self) -> list[dict]:
@@ -346,7 +352,7 @@ class Database:
     async def get_all_downloads(
         self, status: str | None = None, page: int = 1, page_size: int = 20,
         creator_id: int | None = None, section_name: str | None = None,
-        tags: list[str] | None = None,
+        tags: list[str] | None = None, sort_by: str = "created_at", sort_order: str = "desc",
     ) -> dict:
         conditions = []
         params = []
@@ -368,6 +374,17 @@ class Database:
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * page_size
+        # Sort mapping
+        sort_map = {
+            "title": "v.title",
+            "duration": "v.duration",
+            "resolution": "d.resolution",
+            "file_size": "d.file_size",
+            "created_at": "d.created_at",
+        }
+        sort_col = sort_map.get(sort_by, "d.created_at")
+        sort_dir = "DESC" if sort_order.lower() == "desc" else "ASC"
+        order_by = f"ORDER BY {sort_col} IS NULL, {sort_col} {sort_dir}"
         # Count total
         params_count = params[:]
         cur_count = await self._conn.execute(
@@ -384,7 +401,7 @@ class Database:
             f"c.name as creator_name, c.id as creator_id "
             f"FROM download d JOIN video v ON d.video_id = v.id "
             f"JOIN creator c ON v.creator_id = c.id "
-            f"{where} ORDER BY d.created_at DESC LIMIT ? OFFSET ?",
+            f"{where} {order_by} LIMIT ? OFFSET ?",
             params,
         )
         rows = await cur.fetchall()
@@ -542,6 +559,80 @@ class Database:
             (space_url, space_uid, task_id),
         )
         await self._conn.commit()
+
+    async def cleanup_stale_downloads(self):
+        """Clean up downloads stuck in 'downloading' after process kill.
+        Check file existence: if file exists → completed, else → failed.
+        Never resets to 'pending' to avoid unexpected re-downloads.
+        """
+        import os
+        cur = await self._conn.execute(
+            "SELECT id, save_path FROM download WHERE status='downloading'"
+        )
+        rows = await cur.fetchall()
+        completed = 0
+        failed = 0
+        for row in rows:
+            dl_id, save_path = row["id"], row["save_path"]
+            if save_path and os.path.exists(save_path):
+                await self._conn.execute(
+                    "UPDATE download SET status='completed', finished_at=datetime('now'), "
+                    "error_msg=NULL WHERE id=?", (dl_id,)
+                )
+                completed += 1
+            else:
+                await self._conn.execute(
+                    "UPDATE download SET status='failed', error_msg='进程中断，下载未完成', "
+                    "started_at=NULL WHERE id=?", (dl_id,)
+                )
+                failed += 1
+        await self._conn.commit()
+        if completed or failed:
+            logger.info(f"清理卡死下载: {completed} 个已完成(文件存在), {failed} 个标记失败")
+        return completed, failed
+
+    async def check_storage(self, new_output_dir: str) -> dict:
+        """Check completed downloads' save_path validity against filesystem.
+        If old path invalid, try new_output_dir + filename.
+        Returns {moved, missing, total_checked}.
+        """
+        import os
+        new_output_dir = os.path.normpath(new_output_dir)
+        cur = await self._conn.execute(
+            "SELECT id, save_path FROM download WHERE status='completed'"
+        )
+        rows = await cur.fetchall()
+        moved = 0
+        missing = 0
+        for row in rows:
+            dl_id, save_path = row["id"], row["save_path"]
+            if os.path.exists(save_path):
+                # Also backfill file_size if NULL
+                await self._conn.execute(
+                    "UPDATE download SET file_size=COALESCE(file_size, ?) WHERE id=? AND file_size IS NULL",
+                    (os.path.getsize(save_path), dl_id),
+                )
+                continue
+            # Old path invalid, try new directory
+            filename = os.path.basename(save_path)
+            new_path = os.path.join(new_output_dir, filename)
+            if os.path.exists(new_path):
+                size = os.path.getsize(new_path)
+                await self._conn.execute(
+                    "UPDATE download SET save_path=?, file_size=COALESCE(file_size, ?) WHERE id=?",
+                    (new_path, size, dl_id),
+                )
+                moved += 1
+            else:
+                await self._conn.execute(
+                    "UPDATE download SET status='pending', error_msg='文件不存在', "
+                    "started_at=NULL, finished_at=NULL, file_size=NULL WHERE id=?", (dl_id,)
+                )
+                missing += 1
+        await self._conn.commit()
+        if moved or missing:
+            logger.info(f"存储检测: {moved} 个路径已更新, {missing} 个标记为待下载")
+        return {"moved": moved, "missing": missing, "total_checked": len(rows)}
 
     async def reset_task_downloads(self, creator_id: int):
         """Reset non-completed downloads for a creator to pending status (skip completed)."""

@@ -282,6 +282,7 @@ async def web_command(args):
     from bilibili_downloader.web.task_service import TaskService
     db = Database(DEFAULT_DB_PATH)
     await db.init()
+    await db.cleanup_stale_downloads()
     task_service = TaskService(db=db, ws_manager=get_ws_manager())
     app = create_app(db, task_service=task_service)
     logger.info(f"Web dashboard starting on http://localhost:{args.port}")

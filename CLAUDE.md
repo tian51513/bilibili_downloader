@@ -85,6 +85,13 @@ B站API对非浏览器流量返回反爬错误（-352, -799, 412）。解决方�
 - `--no-cache` 跳过缓存文件，强制重新扫码
 - Cookie过期时scraper报-403，提示使用 `--no-cache` 重新登录
 
+## 快捷启动
+
+```bash
+start.bat      # 启动Web仪表盘（自动激活venv+打开浏览器）
+restart.bat    # 重启服务（自动关闭旧进程+等待端口释放+启动新服务）
+```
+
 ### 流URL获取与视频标签
 
 - `/x/player/playurl` 端点**无需WBI签名**，aiohttp直接请求即可
@@ -114,7 +121,7 @@ bilibili_downloader/
 │   └── main.py        # argparse命令解析 + Cookie解析 + QR登录 + 两阶段流程
 └── web/
     ├── app.py          # FastAPI应用工厂 + Jinja2 Environment（直接使用，绕过Starlette兼容问题）
-    ├── routes.py       # REST API（30+端点: stats/downloads/tasks/creators/sections/tags/settings/cookie/视频文件服务）
+    ├── routes.py       # REST API（30+端点: stats/downloads/tasks/creators/sections/tags/settings/cookie/视频文件服务/存储检测）
     ├── task_service.py  # TaskService — 后台任务运行（串行采集队列+API补全+下载调度+Cookie管理）
     ├── ws_manager.py    # WSManager — WebSocket连接管理与广播
     └── templates/
@@ -299,8 +306,16 @@ python -m pytest tests/ -v    # 54个测试
 - 视频标题可点击跳转B站（新标签页）
 - 视频播放器模态框（自动播放 + 动态播放列表 + 上/下一个 + 自动连播）
 - 设置居中面板（分组布局 + 分隔线）
-- 原生目录选择器（tkinter）
+- 原生目录选择器（tkinter，subprocess 方式避免主线程冲突，GBK 编码兼容中文路径）
 - 30+ REST API端点
+
+**V2.1 增强**
+- 下载列表排序（标题/时长/分辨率/大小，点击表头切换升降序）
+- 存储检测按钮（扫描文件路径有效性，自动更新新路径/标记缺失为待下载）
+- 下载完成时记录实际分辨率（stream resolution 而非请求分辨率）
+- 服务启动时自动清理卡死 downloading 记录（文件存在→completed，不存在→failed）
+- restart.bat 一键重启（Python 脚本杀端口进程 + 循环等待释放 + 延迟打开浏览器）
+- WebSocket 依赖完善（uvicorn[standard] 包含 websockets）
 
 ### V2 待做
 

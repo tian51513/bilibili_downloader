@@ -151,6 +151,8 @@
         .btn-danger { background: #f5222d; }
         .btn-danger:hover { background: #cf1322; }
         .btn-sm { padding: 3px 10px; font-size: 12px; border-radius: 4px; }
+        .btn-info { background: #1890ff; }
+        .btn-info:hover { background: #096dd9; }
         .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-input); }
         .btn-ghost:hover { border-color: #00a1d6; color: #00a1d6; }
 
@@ -162,6 +164,13 @@
         body[data-theme="dark"] .btn-warning { background: #eab308; color: #1a1a2e; }
         body[data-theme="dark"] .btn-warning:hover { background: #ca8a04; color: #fff; }
         body[data-theme="dark"] .btn-danger { background: #ef4444; }
+        body[data-theme="dark"] .btn-info { background: #3b82f6; }
+        body[data-theme="dark"] .btn-info:hover { background: #2563eb; }
+        th.sortable { cursor: pointer; user-select: none; }
+        th.sortable:hover { color: #00a1d6; }
+        .sort-arrow::after { content: ''; margin-left: 4px; font-size: 10px; opacity: 0.4; }
+        .sort-arrow.asc::after { content: '▲'; opacity: 1; }
+        .sort-arrow.desc::after { content: '▼'; opacity: 1; }
         body[data-theme="dark"] .btn-danger:hover { background: #dc2626; }
         body[data-theme="dark"] .btn-ghost { color: #aaa; border-color: #3a3a5a; }
         body[data-theme="dark"] .btn-ghost:hover { border-color: #22d3ee; color: #22d3ee; }
@@ -325,6 +334,7 @@
                     <button id="btn-dl-batch" class="btn btn-primary" disabled onclick="downloadSelected()">下载选中</button>
                     <button id="btn-dl-start" class="btn btn-success" onclick="startDownloads()">开始下载</button>
                     <button id="btn-dl-pause" class="btn btn-warning" style="display:none" onclick="pauseDownloads()">暂停下载</button>
+                    <button class="btn btn-info" onclick="storageCheck()">存储检测</button>
                     <button class="btn btn-danger" onclick="clearAllDownloads()">清空全部</button>
                 </div>
             </div>
@@ -335,12 +345,12 @@
                         <tr>
                             <th style="width:30px"><input type="checkbox" id="dl-select-all" onchange="toggleDlSelectAll(this.checked)"></th>
                             <th>UP主</th>
-                            <th>视频标题</th>
+                            <th class="sortable" onclick="toggleSort('title')">视频标题<span class="sort-arrow" data-sort="title"></span></th>
                             <th>标签</th>
-                            <th>时长</th>
-                            <th>分辨率</th>
+                            <th class="sortable" onclick="toggleSort('duration')">时长<span class="sort-arrow" data-sort="duration"></span></th>
+                            <th class="sortable" onclick="toggleSort('resolution')">分辨率<span class="sort-arrow" data-sort="resolution"></span></th>
                             <th>状态</th>
-                            <th>大小</th>
+                            <th class="sortable" onclick="toggleSort('file_size')">大小<span class="sort-arrow" data-sort="file_size"></span></th>
                             <th>进度</th>
                             <th>错误信息</th>
                             <th>操作</th>
@@ -815,6 +825,25 @@
             onTagChange();
         }
 
+        // ========== Sort ==========
+        let currentSortBy = 'created_at';
+        let currentSortOrder = 'desc';
+
+        function toggleSort(field) {
+            if (currentSortBy === field) {
+                currentSortOrder = currentSortOrder === 'desc' ? 'asc' : 'desc';
+            } else {
+                currentSortBy = field;
+                currentSortOrder = field === 'file_size' || field === 'duration' ? 'desc' : 'asc';
+            }
+            document.querySelectorAll('.sort-arrow').forEach(el => {
+                el.classList.remove('asc', 'desc');
+            });
+            const arrow = document.querySelector(`.sort-arrow[data-sort="${field}"]`);
+            if (arrow) arrow.classList.add(currentSortOrder);
+            loadDownloads(downloadPage);
+        }
+
         // Close tag dropdown when clicking outside
         document.addEventListener('click', (e) => {
             const wrap = document.getElementById('tag-filter-wrap');
@@ -831,6 +860,8 @@
             if (currentStatus) url += '&status=' + encodeURIComponent(currentStatus);
             if (creatorId) url += '&creator_id=' + encodeURIComponent(creatorId);
             if (selectedTags.size > 0) url += '&tags=' + encodeURIComponent([...selectedTags].join(','));
+            url += '&sort_by=' + encodeURIComponent(currentSortBy);
+            url += '&sort_order=' + encodeURIComponent(currentSortOrder);
 
             const resp = await fetchJSON(url);
             const downloads = resp.items || resp;
@@ -969,6 +1000,30 @@
             await fetch(`/api/tasks/${id}/delete`, { method: 'POST' });
             loadTasks(taskPage);
             loadStats();
+        }
+
+        async function storageCheck() {
+            try {
+                const resp = await fetch('/api/storage-check', { method: 'POST' });
+                const result = await resp.json();
+                if (!result.ok) {
+                    alert('存储检测失败: ' + (result.error || '未知错误'));
+                    return;
+                }
+                const moved = result.moved || 0;
+                const missing = result.missing || 0;
+                const total = result.total_checked || 0;
+                if (moved === 0 && missing === 0) {
+                    alert('存储检测完成: 全部 ' + total + ' 个文件路径正常');
+                } else {
+                    alert('存储检测完成:\n  路径已更新: ' + moved + ' 个\n  文件不存在(待下载): ' + missing + ' 个\n  检查总数: ' + total + ' 个');
+                }
+                downloadPage = 1;
+                loadStats();
+                loadDownloads(1);
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
         }
 
         async function clearAllDownloads() {

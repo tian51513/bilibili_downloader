@@ -27,6 +27,8 @@ B站UP主视频批量下载器。Playwright 浏览器采集数据（绕过反爬
 - WebSocket实时推送（精确状态驱动，无轮询）
 - 统一UI系统（日间/夜间双主题）
 - 分页显示、目录选择器、设置持久化
+- 下载列表排序（标题/时长/分辨率/大小）
+- 存储检测（扫描路径有效性，自动修复）
 
 ## 快速开始
 
@@ -106,6 +108,7 @@ bilibili-dl https://space.bilibili.com/33676449 --no-cache                   # �
 bilibili-dl web                # 默认 http://localhost:8080
 bilibili-dl web --port 9090  # 自定义端口
 start.bat                   # Windows 一键启动（自动激活venv+打开浏览器）
+restart.bat                 # Windows 一键重启（自动关闭旧进程+启动新服务）
 ```
 
 功能：任务管理、下载管理、视频播放、状态筛选、项目设置。
@@ -140,6 +143,9 @@ start.bat                   # Windows 一键启动（自动激活venv+打开浏�
 | `/api/cookie/status` | GET | Cookie状态 |
 | `/api/cookie/clear` | POST | 清除Cookie |
 | `/api/trigger-login` | POST | 触发扫码登录 |
+| `/api/storage-check` | POST | 存储检测（扫描路径有效性） |
+| `/api/pick-directory` | POST | 原生目录选择器 |
+| `/api/directories` | POST | 列出子目录 |
 
 ## 命令行参数
 
@@ -192,12 +198,14 @@ bilibili_downloader/
 │   └── main.py        # argparse + Cookie + QR登录
 └── web/               # Web仪表盘
     ├── app.py          # FastAPI应用 + WebSocket
-    ├── routes.py       # REST API（30+端点）
+    ├── routes.py       # REST API（30+端点 + 存储检测）
     ├── task_service.py # 后台任务服务（采集队列+API补全+下载调度）
     ├── ws_manager.py   # WebSocket连接管理
     └── templates/
         └── index.html   # 仪表盘（任务+下载+播放+设置）
 start.bat              # Windows一键启动
+restart.bat            # Windows一键重启
+restart.py             # 重启脚本（端口检测+进程管理）
 ```
 
 ## 技术架构

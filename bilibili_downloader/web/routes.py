@@ -36,6 +36,8 @@ def create_routes(db, env, task_service=None):
             section_name=section_name or None,
             tags=tags,
             page=page, page_size=page_size,
+            sort_by=request.query_params.get("sort_by", "created_at"),
+            sort_order=request.query_params.get("sort_order", "desc"),
         )
         return JSONResponse(downloads)
 
@@ -89,6 +91,7 @@ def create_routes(db, env, task_service=None):
     async def api_pick_directory(request: Request) -> JSONResponse:
         """Open native directory picker dialog via subprocess (avoids tkinter main-thread issue)."""
         import asyncio
+        import locale
         import sys
         data = await request.json()
         initial_dir = data.get("current_path", "./downloads")
@@ -100,6 +103,7 @@ def create_routes(db, env, task_service=None):
             "root.destroy(); print(r)"
         )
 
+        sys_encoding = locale.getpreferredencoding(False)
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-c", script,
@@ -108,9 +112,9 @@ def create_routes(db, env, task_service=None):
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             if proc.returncode != 0:
-                logger.error(f"Directory picker process error: {stderr.decode()}")
-                return JSONResponse({"ok": False, "error": stderr.decode()[:200]}, status_code=500)
-            selected = stdout.decode().strip()
+                logger.error(f"Directory picker process error: {stderr.decode(sys_encoding, errors='replace')}")
+                return JSONResponse({"ok": False, "error": stderr.decode(sys_encoding, errors='replace')[:200]}, status_code=500)
+            selected = stdout.decode(sys_encoding).strip()
         except asyncio.TimeoutError:
             proc.kill()
             return JSONResponse({"ok": False, "error": "timeout"}, status_code=500)
@@ -330,6 +334,21 @@ def create_routes(db, env, task_service=None):
             return JSONResponse({"running": False})
         return JSONResponse({"running": task_service.is_downloading()})
 
+    async def api_storage_check(request: Request) -> JSONResponse:
+        """Check completed downloads' file existence and update paths."""
+        settings = load_settings()
+        new_output_dir = settings.get("output_dir", "./downloads")
+        result = await db.check_storage(new_output_dir)
+        # Sync task status after changes
+        if result["moved"] or result["missing"]:
+            try:
+                tasks_result = await db.get_all_tasks(page=1, page_size=200)
+                for t in tasks_result.get("items", []):
+                    await db.sync_task_status_from_downloads(t["id"])
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, **result})
+
     async def api_video_file(request: Request) -> FileResponse:
         """Serve a downloaded video file for preview/play."""
         download_id = int(request.path_params["download_id"])
@@ -403,6 +422,7 @@ def create_routes(db, env, task_service=None):
         "/api/downloads/start": (api_download_start, ["POST"]),
         "/api/downloads/pause": (api_download_pause, ["POST"]),
         "/api/downloads/status": (api_download_status, ["GET"]),
+        "/api/storage-check": (api_storage_check, ["POST"]),
         "/api/downloads/{download_id}": (api_download_detail, ["GET"]),
         "/api/downloads/{download_id}/retry": (api_download_retry, ["POST"]),
         "/api/downloads/{download_id}/delete": (api_download_delete, ["DELETE"]),
