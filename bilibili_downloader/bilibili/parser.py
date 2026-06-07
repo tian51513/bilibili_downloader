@@ -24,9 +24,14 @@ def parse_space_info(raw: dict) -> dict:
 
 
 def parse_video_list(raw: dict) -> list[dict]:
+    """解析 arc/search 响应中的视频列表，自动过滤付费/充电专属视频。"""
     vlist = raw.get("data", {}).get("list", {}).get("vlist", [])
     videos = []
     for v in vlist:
+        # 跳过付费/充电专属视频（price > 0 表示需要付费）
+        price = v.get("price", 0)
+        if price and price > 0:
+            continue
         duration = 0
         length = v.get("length", "")
         if ":" in length:

@@ -64,6 +64,11 @@ class BilibiliAPI:
         pages = video_data.get("pages", [])
         cid = pages[0]["cid"] if pages else None
 
+        # 检测充电专属视频
+        if video_data.get("is_upower_exclusive"):
+            logger.info(f"[api] {bvid} 为UP主充电专属视频，跳过")
+            return {"cid": cid, "tags": [], "is_upower_exclusive": True}
+
         # Fetch tags from dedicated tag endpoint (more reliable than view API)
         tags = []
         try:
@@ -107,6 +112,27 @@ class BilibiliAPI:
         except Exception:
             return False
 
+    async def validate_cookie_for_scraping(self) -> bool:
+        """检查 cookie 是否可用于采集（测试 arc/search 端点）。
+
+        使用官方账号（mid=2）的公开空间测试，如果返回 -403 则说明 cookie 无效。
+        """
+        from bilibili_downloader.bilibili.wbi import WbiSigner
+        try:
+            signer = await WbiSigner.create(self.session)
+            params = signer.sign({"mid": "2", "ps": 1, "pn": 1, "order": "pubdate"})
+            url = f"{BILIBILI_API_BASE}/x/space/wbi/arc/search?{urlencode(params)}"
+            async with self.session.get(url, headers=self.headers, timeout=REQUEST_TIMEOUT) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json()
+                code = data.get("code", -1)
+                if code == -403:
+                    return False
+                return code == 0 or code == -400  # -400=请求错误但不是权限问题
+        except Exception:
+            return False
+
     async def get_user_card(self, mid: str) -> dict | None:
         """Get user card info (name, face, etc.) by mid."""
         url = f"{BILIBILI_API_BASE}/x/web-interface/card"
@@ -136,6 +162,7 @@ class BilibiliAPI:
         seen_bvids = set(existing_bvids)
         page = 1
         total = None
+        paid_count = 0
 
         signer = await WbiSigner.create(self.session)
 
@@ -158,6 +185,9 @@ class BilibiliAPI:
             page_data = data["data"]
             total = page_data.get("page", {}).get("count", 0)
             new_videos = []
+            for v in data.get("data", {}).get("list", {}).get("vlist", []):
+                if v.get('price', 0) and v['price'] > 0:
+                    paid_count += 1
             for v in parse_video_list(data):
                 if v["remote_id"] not in seen_bvids:
                     new_videos.append(v)
@@ -169,5 +199,8 @@ class BilibiliAPI:
             if len(seen_bvids) >= total:
                 break
             page += 1
+
+        if paid_count > 0:
+            logger.info(f"[api] backfill 过滤 {paid_count} 个付费/充电专属视频")
 
         return all_videos

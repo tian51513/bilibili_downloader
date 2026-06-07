@@ -2,12 +2,13 @@
 
 ## 项目概述
 
-B站UP主视频批量下载器。两阶段架构：Phase 1 用 Playwright 浏览器爬取数据（绕过B站反爬），Phase 2 用 aiohttp 异步高并发下载视频流。无cookie时自动弹出浏览器扫码登录并缓存，后续运行免登录。CLI + Web 仪表盘双模式，SQLite 本地状态追踪，多平台可扩展。
+多平台视频批量下载器（B站 + YouTube）。两阶段架构：Phase 1 用 Playwright/yt-dlp 采集数据，Phase 2 用 aiohttp/yt-dlp 异步下载视频流。无cookie时自动弹出浏览器扫码登录并缓存。CLI + Web 仪表盘双模式，SQLite 本地状态追踪，平台抽象层可扩展。
 
 ## 技术栈
 
 - **语言**: Python 3.11+（开发环境 3.12）
-- **数据采集**: Playwright (Chromium headless browser)
+- **数据采集**: Playwright (Chromium headless browser) + yt-dlp + browser-cookie3
+- **JS运行时**: Node.js（YouTube 签名解析，可选）
 - **异步框架**: asyncio + aiohttp
 - **Web框架**: FastAPI + Jinja2 + Uvicorn
 - **数据库**: SQLite（aiosqlite 异步驱动）
@@ -31,7 +32,7 @@ CLI入口 (cli/main.py)
     │     启动Chromium → 注入Cookie → 导航bilibili.com建立会话
     │   [无Cookie时] _qr_code_login
     │     headed模式 → 点击登录/导航登录页 → 终端提示扫码 →
-    │     轮询SESSDATA cookie → 保存到bilibili_cookies.json
+    │     轮询SESSDATA cookie → 保存到 cookies/bilibili_cookies.json
     │   BilibiliScraper (bilibili/scraper.py)
     │     导航UP主空间页 → on_response被动读取API响应 → 滚动加载 → 去重
     │   关闭浏览器释放资源
@@ -78,7 +79,7 @@ B站API对非浏览器流量返回反爬错误（-352, -799, 412）。解决方�
 ```
 1. CLI参数: --cookie SESSDATA=xxx（最高优先级）
 2. 环境变量: BILIBILI_SESSDATA / BILIBILI_BILI_JCT
-3. 缓存文件: bilibili_cookies.json（扫码登录后自动保存）
+3. 缓存文件: cookies/bilibili_cookies.json（扫码登录后自动保存）
 4. 扫码登录: 自动弹出headed浏览器，用户手机APP扫码（超时120秒）
 ```
 
@@ -105,9 +106,13 @@ bilibili_downloader/
 ├── config.py          # 配置常量 + load_settings/save_settings（JSON持久化）
 ├── main.py            # 程序入口（委托cli.main）
 ├── browser.py         # PlaywrightBrowser — 浏览器生命周期管理 + Cookie文件I/O
-├── storage/
-│   ├── database.py    # Database类 — SQLite异步CRUD（platform/creator/video/download四表 + 标签）
-│   └── files.py       # 文件命名模板 + 路径解析 + 非法字符过滤（含bvid防重名）
+├── platforms/
+│   ├── __init__.py    # 包导出
+│   ├── base.py        # BasePlatform 抽象类 + PlatformRegistry 注册中心 + create_registry
+│   ├── bilibili.py    # BilibiliPlatform — 封装 bilibili/ 模块（Playwright采集 + aiohttp双流下载）
+│   └── youtube.py     # YouTubePlatform — yt-dlp extract_info 采集 + yt-dlp download 下载
+├── youtube/
+│   └── __init__.py    # 便捷导入
 ├── bilibili/
 │   ├── api.py         # BilibiliAPI — 获取视频流URL + get_video_info(含标签) + fetch_videos_by_api(API补全)
 │   ├── parser.py      # 纯函数 — 解析API响应（空间信息/视频列表(含tag)/合集/DASH流）
@@ -117,12 +122,15 @@ bilibili_downloader/
 │   ├── manager.py     # DownloadManager — 队列构建、Worker池调度、并发信号量、取消事件
 │   ├── worker.py      # download_video — 单视频下载（cid/标签补充 + 双流下载 + ffmpeg合并 + 断点续传 + 限速 + WS广播）
 │   └── retry.py       # retry_async — 指数退避重试，自动识别永久错误
+├── storage/
+│   ├── database.py    # Database类 — SQLite异步CRUD（platform/creator/video/download/task五表 + 标签）
+│   └── files.py       # 文件命名模板 + 路径解析 + 非法字符过滤（含bvid防重名）
 ├── cli/
 │   └── main.py        # argparse命令解析 + Cookie解析 + QR登录 + 两阶段流程
 └── web/
     ├── app.py          # FastAPI应用工厂 + Jinja2 Environment（直接使用，绕过Starlette兼容问题）
     ├── routes.py       # REST API（30+端点: stats/downloads/tasks/creators/sections/tags/settings/cookie/视频文件服务/存储检测）
-    ├── task_service.py  # TaskService — 后台任务运行（串行采集队列+API补全+下载调度+Cookie管理）
+    ├── task_service.py  # TaskService — 多平台后台任务运行（PlatformRegistry识别 → 按平台策略采集+下载）
     ├── ws_manager.py    # WSManager — WebSocket连接管理与广播
     └── templates/
         └── index.html  # 仪表盘（统计+Tab+筛选+标签多选(OR)+进度条+设置+任务面板+视频播放器）
@@ -150,7 +158,8 @@ bilibili_downloader/
 | DEFAULT_RESOLUTION_PRIORITY | ["720p","480p","1080p","240p"] | 分辨率优先级 |
 | DEFAULT_NAME_TEMPLATE | {title}【{creator}-{section}】 | 文件命名模板 |
 | DEFAULT_DB_PATH | bilibili_downloader.db | SQLite数据库路径 |
-| DEFAULT_COOKIE_CACHE_PATH | bilibili_cookies.json | Cookie缓存文件路径 |
+| DEFAULT_COOKIE_CACHE_PATH | cookies/bilibili_cookies.json | B站Cookie缓存文件路径 |
+| DEFAULT_YOUTUBE_COOKIE_CACHE_PATH | cookies/youtube_cookies.txt | YouTube Cookie文件路径 |
 | DEFAULT_WEB_PORT | 8080 | Web仪表盘端口 |
 | SETTINGS_PATH | bilibili_settings.json | 用户设置持久化文件 |
 
@@ -187,7 +196,7 @@ start.bat                              # Windows快捷启动（自动激活venv+
   --cookie NAME=VALUE     B站cookie（如 --cookie SESSDATA=xxx，可多次使用）
 ```
 
-不提供cookie时自动弹出浏览器扫码登录，登录后缓存到 `bilibili_cookies.json`，后续运行自动读取。
+不提供cookie时自动弹出浏览器扫码登录，登录后缓存到 `cookies/bilibili_cookies.json`，后续运行自动读取。
 Cookie也可通过环境变量设置：`BILIBILI_SESSDATA`、`BILIBILI_BILI_JCT`。
 
 ## 开发指南
@@ -226,7 +235,7 @@ python -m pytest tests/ -v    # 54个测试
 - Playwright浏览器爬取数据（绕过B站反爬检测）
 - on_response 被动读取API响应（不拦截不干扰页面）
 - QR码扫码登录（自动弹出浏览器，120秒超时）
-- Cookie本地缓存（bilibili_cookies.json，自动读取/保存）
+- Cookie本地缓存（cookies/bilibili_cookies.json，自动读取/保存）
 - Cookie 4级优先级解析（CLI > 环境变量 > 缓存 > 扫码）
 - `--no-cache` 强制重新登录
 - 滚动加载分页视频，去重bvid计数
@@ -319,9 +328,41 @@ python -m pytest tests/ -v    # 54个测试
 
 ### V2 待做
 
-- 多平台支持（YouTube等）
 - 远程访问WebSocket安全
 - 批量任务导入/导出
+
+### V3 已完成
+
+**多平台架构**
+- 平台抽象层（`platforms/base.py` — BasePlatform 抽象类 + PlatformRegistry 注册中心）
+- Bilibili 平台封装（`platforms/bilibili.py` — 调用现有 bilibili/ 模块）
+- YouTube 平台实现（`platforms/youtube.py` — yt-dlp extract_info + download）
+- URL 自动识别平台（PlatformRegistry.identify 根据 URL 匹配平台）
+- TaskService 多平台任务执行（submit_task 自动识别 → 按平台策略采集和下载）
+- 不支持的平台提示"开发中"（前端 + 后端双重提示）
+
+**YouTube 增强**
+- YouTube Cookie 管理（Netscape 格式，从 Chrome 导入 / 手动粘贴 / 清除）
+- browser-cookie3 处理 Chrome v127+ App-Bound Encryption（无需关闭 Chrome）
+- Node.js JS 运行时自动检测 + 签名解析脚本自动下载
+- YouTube 下载记录实际分辨率（不再固定显示 "best"）
+- YouTube 下载独立调度，不经过 BilibiliAPI（避免平台串扰）
+
+**Cookie 管理**
+- 统一 Cookie 管理面板（Tab 切换 B站/YouTube）
+- Cookie 文件统一存放 `cookies/` 目录
+- 系统代理自动检测（Windows 注册表 / 环境变量）
+- 设置保存反馈提示
+
+**Bug 修复**
+- UP主充电专属视频自动跳过（87008 永久错误）
+- 416 Range Not Satisfiable 自动清理过期临时文件重试
+- 点击 pending 视频下载按钮正确触发下载
+- 卡死 downloading 状态自动检测重置
+- 下载总数统计修正（使用 download 表计数）
+- B站/YouTube 下载完全分离（排除平台串扰导致的 -400 错误）
+- restart.bat 关闭旧终端窗口（`exit` 命令）
+- restart.py 使用 subprocess.Popen 替代 os.execv（避免僵尸进程）
 
 ## Agent skills
 

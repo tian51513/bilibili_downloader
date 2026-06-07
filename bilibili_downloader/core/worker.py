@@ -8,7 +8,7 @@ import time
 
 import aiohttp
 
-from bilibili_downloader.config import MIN_SPEED_LIMIT_KB
+from bilibili_downloader.config import MIN_SPEED_LIMIT_KB, REQUEST_TIMEOUT
 from bilibili_downloader.core.retry import retry_async
 from bilibili_downloader.storage.files import build_filename, resolve_save_path
 
@@ -46,7 +46,37 @@ async def _download_stream(
     if existing_size > 0:
         download_headers["Range"] = f"bytes={existing_size}-"
 
-    async with session.get(url, headers=download_headers) as resp:
+    timeout = aiohttp.ClientTimeout(total=300, connect=30)
+    async with session.get(url, headers=download_headers, timeout=timeout) as resp:
+        # 416 = 本地临时文件大小超过服务器文件（流URL过期/变更），删除临时文件重新下载
+        if resp.status == 416:
+            logger.warning(f"[download] 416 Range Not Satisfiable, restarting: {save_path}")
+            if os.path.exists(save_path):
+                os.remove(save_path)
+            download_headers.pop("Range", None)
+            async with session.get(url, headers=download_headers, timeout=timeout) as resp2:
+                resp2.raise_for_status()
+                downloaded = 0
+                mode = "wb"
+                progress_counter = 0
+                with open(save_path, mode) as f:
+                    async for chunk in resp2.content.iter_chunked(chunk_size):
+                        chunk_start = time.monotonic()
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        chunk_elapsed = time.monotonic() - chunk_start
+                        await _apply_speed_limit(len(chunk), speed_limit_bps, chunk_elapsed)
+                        if downloaded % (chunk_size * 10) == 0 or downloaded == 0:
+                            await db.update_download_progress(download_id, downloaded)
+                        progress_counter += 1
+                        if progress_counter % 5 == 0 and ws_manager:
+                            await ws_manager.broadcast({
+                                "type": "download_progress",
+                                "download_id": download_id,
+                                "file_size": downloaded,
+                                "total_size": 0,
+                            })
+                return downloaded
         resp.raise_for_status()
         # Determine total size
         if not total_size:
@@ -58,10 +88,9 @@ async def _download_stream(
                 total_size = existing_size + int(resp.headers.get("Content-Length", 0))
 
         if total_size > 0:
-            await db._conn.execute(
+            await db._xq(
                 "UPDATE download SET total_size=? WHERE id=?", (total_size, download_id)
             )
-            await db._conn.commit()
 
         downloaded = existing_size
         mode = "ab" if existing_size > 0 else "wb"
@@ -124,10 +153,9 @@ async def _merge_audio_video(
         os.remove(video_path)
         os.remove(audio_path)
         logger.info(f"[merge] Merged to {output_path}, removed temp files")
-        await db._conn.execute(
+        await db._xq(
             "UPDATE download SET save_path=? WHERE id=?", (output_path, download_id)
         )
-        await db._conn.commit()
         return True
     except Exception as e:
         logger.error(f"[merge] Error: {e}")
@@ -182,6 +210,18 @@ async def download_video(
             else:
                 video_info = None
 
+            # 检查是否为充电专属视频（get_video_info 返回 is_upower_exclusive）
+            if video_info and video_info.get("is_upower_exclusive"):
+                await db.update_download_status(download_id, "skipped", "UP主充电专属视频")
+                if ws_manager:
+                    await ws_manager.broadcast({
+                        "type": "download_progress",
+                        "download_id": download_id,
+                        "status": "skipped",
+                    })
+                logger.info(f"Skipped {bvid}: UP主充电专属视频")
+                return
+
             # Fetch tags if video doesn't have them yet
             if video.get("id") and not video.get("tags"):
                 try:
@@ -190,6 +230,16 @@ async def download_video(
                             lambda: api.get_video_info(bvid),
                             max_retries=2, backoff_base=2,
                         )
+                    if video_info and video_info.get("is_upower_exclusive"):
+                        await db.update_download_status(download_id, "skipped", "UP主充电专属视频")
+                        if ws_manager:
+                            await ws_manager.broadcast({
+                                "type": "download_progress",
+                                "download_id": download_id,
+                                "status": "skipped",
+                            })
+                        logger.info(f"Skipped {bvid}: UP主充电专属视频")
+                        return
                     if video_info and video_info.get("tags"):
                         await db.update_video_tags(video["id"], video_info["tags"])
                 except Exception as e:
@@ -205,7 +255,7 @@ async def download_video(
                 logger.debug(f"[worker] {bvid} stream: {stream['resolution']}, "
                              f"video={stream['video_url'][:60]}... audio={'yes' if stream.get('audio_url') else 'no'}")
             except ValueError as e:
-                if "skipped" in str(e) or "62002" in str(e) or "充值" in str(e):
+                if "skipped" in str(e) or "62002" in str(e) or "87008" in str(e) or "充值" in str(e):
                     await db.update_download_status(download_id, "skipped", str(e))
                     if ws_manager:
                         await ws_manager.broadcast({

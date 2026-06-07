@@ -4,7 +4,7 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-_NO_RETRY_KEYWORDS = ("code=-404", "code=62002", "skipped:")
+_NO_RETRY_KEYWORDS = ("code=-404", "code=62002", "code=87008", "skipped:")
 
 
 async def retry_async(func, max_retries: int = 3, backoff_base: float = 2):

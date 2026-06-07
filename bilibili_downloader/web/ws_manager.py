@@ -35,3 +35,11 @@ class WSManager:
         for ws in disconnected:
             self.disconnect(ws)
             logger.debug("WebSocket disconnected during broadcast")
+
+
+# 模块级单例，routes.py 等模块可直接导入使用
+_default_manager = WSManager()
+
+
+def get_ws_manager() -> WSManager:
+    return _default_manager

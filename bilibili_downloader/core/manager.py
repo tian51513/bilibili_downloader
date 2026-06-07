@@ -38,22 +38,24 @@ class DownloadManager:
                 queue.append(video)
         return queue
 
-    async def run(self, session):
+    async def run(self, session, auto_discover=True, exclude_platforms: set[str] | None = None):
         # Auto-discover: enqueue un-downloaded videos for all creators
-        creators = await self.db.get_all_creators()
-        for creator in creators:
-            queue = await self._build_queue(creator["id"])
-            for video in queue:
-                filename = build_filename(
-                    title=video["title"], creator=creator["name"],
-                    section=video.get("section_name"), bvid=video.get("remote_id", ""),
-                    template=self.name_template,
-                )
-                save_path = resolve_save_path(self.save_dir, filename)
-                await self.db.insert_download(
-                    video_id=video["id"], save_path=save_path,
-                    resolution=self.resolution_priority[0],
-                )
+        # Web模式下由TaskService管理，不需要auto-discover
+        if auto_discover:
+            creators = await self.db.get_all_creators()
+            for creator in creators:
+                queue = await self._build_queue(creator["id"])
+                for video in queue:
+                    filename = build_filename(
+                        title=video["title"], creator=creator["name"],
+                        section=video.get("section_name"), bvid=video.get("remote_id", ""),
+                        template=self.name_template,
+                    )
+                    save_path = resolve_save_path(self.save_dir, filename)
+                    await self.db.insert_download(
+                        video_id=video["id"], save_path=save_path,
+                        resolution=self.resolution_priority[0],
+                    )
 
         # Process all pending downloads (fetch all pages, not just first page)
         all_pending: list[dict] = []
@@ -66,6 +68,8 @@ class DownloadManager:
                 break
             page += 1
         pending_items = all_pending
+        if exclude_platforms:
+            pending_items = [d for d in pending_items if d.get("platform_name") not in exclude_platforms]
         if not pending_items:
             logger.info("No pending downloads")
             return
@@ -78,7 +82,7 @@ class DownloadManager:
                 continue
             creator_name = dl.get("creator_name")
             if not creator_name:
-                cur = await self.db._conn.execute(
+                cur = await self.db._xq(
                     "SELECT c.name FROM creator c JOIN video v ON v.creator_id = c.id WHERE v.id=?",
                     (dl["video_id"],),
                 )

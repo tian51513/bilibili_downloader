@@ -33,13 +33,16 @@ async def test_submit_invalid_url():
     from bilibili_downloader.web.task_service import TaskService
     db = AsyncMock()
     db.get_task_by_url = AsyncMock(return_value=None)
-    ws_manager = MagicMock()
+    db.get_platform_by_name = AsyncMock(return_value=None)
+    db.insert_platform = AsyncMock(return_value=1)
+    db.insert_task = AsyncMock(return_value=99)
+    db.update_task_status = AsyncMock()
+    ws_manager = AsyncMock()
+    ws_manager.broadcast = AsyncMock()
     ts = TaskService(db=db, ws_manager=ws_manager)
-    try:
-        await ts.submit_task("https://example.com/invalid")
-        assert False, "Should have raised ValueError"
-    except ValueError as e:
-        assert "Invalid" in str(e)
+    task_id = await ts.submit_task("https://example.com/invalid")
+    assert task_id == 99
+    db.update_task_status.assert_called_once_with(99, "failed", error_message="该平台暂不支持，开发中")
 
 
 async def test_broadcast_calls_ws_manager():

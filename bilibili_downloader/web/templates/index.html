@@ -69,8 +69,10 @@
         .tag-option:hover { background: var(--bg-hover); }
         .tag-option input { accent-color: #00a1d6; }
         .tag-option .tag-count { margin-left: auto; font-size: 11px; color: var(--text-muted); }
-        .tag-cell { display: flex; flex-wrap: wrap; gap: 2px; }
-        .tag-chip { padding: 1px 6px; background: var(--bg-tag); border-radius: 3px; font-size: 11px; color: var(--text-secondary); }
+        .tag-cell { display: flex; flex-wrap: nowrap; gap: 2px; overflow: hidden; }
+        .tag-cell:hover { flex-wrap: wrap; }
+        .tag-chip { padding: 1px 6px; background: var(--bg-tag); border-radius: 3px; font-size: 11px; color: var(--text-secondary); cursor: pointer; }
+        .tag-chip:hover { background: var(--accent); color: #fff; }
 
         /* Status tabs */
         .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid var(--border); }
@@ -79,9 +81,9 @@
         .tab.active { color: #00a1d6; border-bottom-color: #00a1d6; font-weight: 600; }
 
         /* Table */
-        .table-wrap { background: var(--bg-card); border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px var(--shadow); transition: background .2s; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text); }
+        .table-wrap { background: var(--bg-card); border-radius: 8px; overflow-x: auto; box-shadow: 0 1px 3px var(--shadow); transition: background .2s; }
+        table { width: 100%; min-width: 1000px; border-collapse: collapse; table-layout: fixed; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text); }
         th { background: var(--bg-table-head); font-weight: 600; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; position: sticky; top: 0; transition: background .2s; }
         tr:hover { background: var(--bg-hover); }
         tr.downloading-row { background: #e6f7ff; }
@@ -177,8 +179,11 @@
 
         .creator-link { color: #00a1d6; text-decoration: none; }
         .creator-link:hover { text-decoration: underline; }
-        .task-error { font-size: 12px; color: #f5222d; display: block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
-        .error-cell { min-width: 80px; }
+        .task-error { font-size: 12px; color: #f5222d; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #fff1f0; cursor: help; position: relative; flex-shrink: 0; }
+        body[data-theme="dark"] .task-error { background: #3d1410; }
+        .task-error::after { content: '!'; font-weight: 700; font-size: 13px; }
+        .task-error:hover::before { content: attr(data-error); position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 12px; white-space: normal; word-break: break-all; width: 260px; max-height: 120px; overflow-y: auto; box-shadow: 0 2px 8px var(--shadow); z-index: 10; pointer-events: none; }
+        .error-cell { text-align: center; }
         .copy-tip { position: fixed; padding: 4px 10px; background: #333; color: #fff; border-radius: 4px; font-size: 12px; pointer-events: none; z-index: 9999; opacity: 0; transition: opacity .2s; }
         .copy-tip.show { opacity: 1; }
 
@@ -223,6 +228,12 @@
         .settings-section .btn-save { display: block; width: 100%; padding: 10px 20px; margin-top: 8px; font-size: 14px; }
         .cookie-card { padding: 16px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; background: var(--bg-card); }
         .cookie-card h3 { font-size: 14px; margin: 0 0 12px; color: var(--text); font-weight: 600; }
+        .cookie-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+        .cookie-tab { padding: 6px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-muted); cursor: pointer; font-size: 13px; transition: all .15s; }
+        .cookie-tab:hover { border-color: #00a1d6; color: #00a1d6; }
+        .cookie-tab.active { background: #00a1d6; color: #fff; border-color: #00a1d6; }
+        .cookie-panel { display: block; }
+        .cookie-panel[data-hidden] { display: none; }
         .cookie-card .cookie-status { font-size: 13px; margin-bottom: 14px; line-height: 1.6; padding: 8px 12px; background: var(--bg); border-radius: 6px; }
         .cookie-card .cookie-status .valid { color: #52c41a; font-weight: 500; }
         .cookie-card .cookie-status .invalid { color: #f5222d; font-weight: 500; }
@@ -243,7 +254,9 @@
 
         .empty { text-align: center; padding: 40px; color: var(--text-muted); }
         .creator-avatar { width: 24px; height: 24px; border-radius: 50%; vertical-align: middle; margin-right: 6px; object-fit: cover; }
-        .title-cell { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* 需要截断的单元格 */
+        td.cell-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .title-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .title-cell a { color: var(--text-primary); text-decoration: none; }
         .title-cell a:hover { color: #00a1d6; text-decoration: underline; }
         body[data-theme="dark"] .title-cell a { color: var(--text-primary); }
@@ -335,6 +348,7 @@
                 <span></span>
                 <div style="display:flex;gap:8px">
                     <button id="btn-dl-batch" class="btn btn-primary" disabled onclick="downloadSelected()">下载选中</button>
+                    <button id="btn-dl-retry-failed" class="btn btn-warning" onclick="retryFailedDownloads()">重试失败</button>
                     <button id="btn-dl-start" class="btn btn-success" onclick="startDownloads()">开始下载</button>
                     <button id="btn-dl-pause" class="btn btn-warning" style="display:none" onclick="pauseDownloads()">暂停下载</button>
                     <button class="btn btn-info" onclick="storageCheck()">存储检测</button>
@@ -347,17 +361,17 @@
                     <thead>
                         <tr>
                             <th style="width:30px"><input type="checkbox" id="dl-select-all" onchange="toggleDlSelectAll(this.checked)"></th>
-                            <th>网站</th>
-                            <th>UP主</th>
-                            <th class="sortable" onclick="toggleSort('title')">视频标题<span class="sort-arrow" data-sort="title"></span></th>
-                            <th>标签</th>
-                            <th class="sortable" onclick="toggleSort('duration')">时长<span class="sort-arrow" data-sort="duration"></span></th>
-                            <th class="sortable" onclick="toggleSort('resolution')">分辨率<span class="sort-arrow" data-sort="resolution"></span></th>
-                            <th>状态</th>
-                            <th class="sortable" onclick="toggleSort('file_size')">大小<span class="sort-arrow" data-sort="file_size"></span></th>
-                            <th>进度</th>
-                            <th>错误信息</th>
-                            <th>操作</th>
+                            <th style="width:100px">网站</th>
+                            <th style="width:150px">UP主</th>
+                            <th class="sortable" style="width:200px" onclick="toggleSort('title')">视频标题<span class="sort-arrow" data-sort="title"></span></th>
+                            <th style="width:1fr">标签</th>
+                            <th class="sortable" style="width:50px" onclick="toggleSort('duration')">时长<span class="sort-arrow" data-sort="duration"></span></th>
+                            <th class="sortable" style="width:55px" onclick="toggleSort('resolution')">分辨率<span class="sort-arrow" data-sort="resolution"></span></th>
+                            <th style="width:80px">状态</th>
+                            <th class="sortable" style="width:80px" onclick="toggleSort('file_size')">大小<span class="sort-arrow" data-sort="file_size"></span></th>
+                            <th style="width:100px">进度</th>
+                            <th style="width:50px">异常</th>
+                            <th style="width:130px;white-space:normal">操作</th>
                         </tr>
                     </thead>
                     <tbody id="download-list">
@@ -438,15 +452,27 @@
         <div class="settings-section">
             <!-- Cookie 管理 -->
             <div class="cookie-card">
-                <h3>Bilibili Cookie 管理</h3>
-                <div class="cookie-status" id="cookie-status">检测中...</div>
-                <div class="cookie-actions">
-                    <button class="btn btn-warning" onclick="triggerLogin()">扫码登录</button>
-                    <button class="btn btn-danger btn-sm" onclick="clearCookie()">清除缓存</button>
+                <h3>Cookie 管理</h3>
+                <div class="cookie-tabs">
+                    <button class="cookie-tab active" data-platform="bilibili" onclick="switchCookieTab('bilibili')">Bilibili</button>
+                    <button class="cookie-tab" data-platform="youtube" onclick="switchCookieTab('youtube')">YouTube</button>
+                </div>
+                <div class="cookie-panel" id="cookie-panel-bilibili">
+                    <div class="cookie-status" id="cookie-status">检测中...</div>
+                    <div class="cookie-actions">
+                        <button class="btn btn-warning" onclick="triggerLogin()">扫码登录</button>
+                        <button class="btn btn-danger btn-sm" onclick="clearCookie()">清除缓存</button>
+                    </div>
+                </div>
+                <div class="cookie-panel" id="cookie-panel-youtube" data-hidden>
+                    <div class="cookie-status" id="yt-cookie-status">检测中...</div>
+                    <div class="cookie-actions">
+                        <button class="btn btn-warning" onclick="importYtCookie()">导入 Cookie</button>
+                        <button class="btn btn-primary btn-sm" onclick="importYtCookieFromChrome()">从 Chrome 导入</button>
+                        <button class="btn btn-danger btn-sm" onclick="clearYtCookie()">清除</button>
+                    </div>
                 </div>
             </div>
-
-            <!-- 下载设置 -->
             <div class="settings-group-title">下载设置</div>
             <div class="field">
                 <label>并发下载数</label>
@@ -484,6 +510,16 @@
                     <input type="text" id="s-output" placeholder="./downloads" style="flex:1">
                     <button type="button" class="btn btn-ghost" onclick="browseDirectory()">浏览</button>
                 </div>
+            </div>
+
+            <hr class="settings-divider">
+
+            <!-- 网络设置 -->
+            <div class="settings-group-title">网络设置</div>
+            <div class="field">
+                <label>YouTube代理 <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="detectProxy()">自动检测</button></label>
+                <input type="text" id="s-yt-proxy" placeholder="http://127.0.0.1:7890">
+                <div class="hint">yt-dlp下载YouTube视频时使用的代理，留空不使用</div>
             </div>
 
             <hr class="settings-divider">
@@ -569,11 +605,16 @@
                 const msg = JSON.parse(e.data);
                 if (['task_status', 'scrape_progress'].includes(msg.type)) {
                     loadStats();
+                    loadFilters();
                     loadTasks(taskPage);
                 }
                 if (msg.type === 'download_progress') {
                     loadStats();
-                    if (msg.status === 'started') {
+                    if (msg.status === 'refresh') {
+                        loadFilters();
+                        loadTasks(taskPage);
+                        if (currentPanel === 'downloads') loadDownloads(downloadPage);
+                    } else if (msg.status === 'started') {
                         toggleDlButtons(true);
                         loadTasks(taskPage);
                         if (currentPanel === 'downloads') loadDownloads(downloadPage);
@@ -590,6 +631,10 @@
                 }
                 if (msg.type === 'login_required') showLoginModal();
                 if (msg.type === 'login_success') hideLoginModal();
+                if (msg.type === 'login_status') {
+                    if (msg.status === 'in_progress') showLoginModal(true);
+                    else if (msg.status === 'done') hideLoginModal();
+                }
             };
             ws.onclose = () => setTimeout(connectWS, 3000);
             ws.onerror = () => {};
@@ -636,10 +681,19 @@
         }
 
         // ========== Login Modal ==========
-        function showLoginModal() {
+        let loginModalActive = false;
+        function showLoginModal(skipTrigger) {
+            if (loginModalActive) return; // 防止重复弹窗
+            loginModalActive = true;
             document.getElementById('login-modal').classList.add('show');
             document.getElementById('login-spinner').textContent = '等待扫码...';
-            fetch('/api/trigger-login', { method: 'POST' }).catch(() => {});
+            if (!skipTrigger) {
+                fetch('/api/trigger-login', { method: 'POST' }).catch(() => {});
+            }
+        }
+        function hideLoginModal() {
+            loginModalActive = false;
+            document.getElementById('login-modal').classList.remove('show');
         }
 
         let playlist = [];
@@ -733,7 +787,7 @@
         // ========== Stats ==========
         async function loadStats() {
             const stats = await fetchJSON('/api/stats');
-            document.getElementById('stat-total').textContent = stats.total_videos;
+            document.getElementById('stat-total').textContent = stats.total_downloads;
             document.getElementById('stat-pending').textContent = stats.pending;
             document.getElementById('stat-downloading').textContent = stats.downloading;
             document.getElementById('stat-completed').textContent = stats.completed;
@@ -826,6 +880,19 @@
             loadDownloads();
         }
 
+        function clickListTag(tag) {
+            selectedTags.clear();
+            selectedTags.add(tag);
+            document.querySelectorAll('#tag-options input[type=checkbox]').forEach(cb => {
+                cb.checked = (cb.value === tag);
+            });
+            const badge = document.getElementById('tag-selected-count');
+            badge.textContent = '1';
+            badge.classList.add('show');
+            downloadPage = 1;
+            loadDownloads();
+        }
+
         function selectAllTags() {
             document.querySelectorAll('#tag-options input[type=checkbox]').forEach(cb => cb.checked = true);
             onTagChange();
@@ -909,22 +976,22 @@
                 try {
                     const tags = dl.tags ? JSON.parse(dl.tags) : [];
                     if (tags.length) {
-                        tagsHtml = '<div class="tag-cell">' + tags.slice(0, 3).map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('') + (tags.length > 3 ? `<span class="tag-chip">+${tags.length-3}</span>` : '') + '</div>';
+                        tagsHtml = '<div class="tag-cell">' + tags.slice(0, 3).map(t => `<span class="tag-chip" onclick="clickListTag('${escAttr(t)}')" title="点击筛选: ${escAttr(t)}">${escHtml(t)}</span>`).join('') + (tags.length > 3 ? `<span class="tag-chip">+${tags.length-3}</span>` : '') + '</div>';
                     }
                 } catch(e) {}
                 return `<tr class="${rowClass}" data-dl-id="${dl.id}">
                     <td><input type="checkbox" class="dl-check" value="${dl.id}" ${dl.status === 'downloading' ? 'disabled' : ''}></td>
-                    <td>${dl.platform_url ? `<a href="${escAttr(dl.platform_url)}" target="_blank">${escHtml(dl.platform_name || '')}</a>` : escHtml(dl.platform_name || '')}</td>
-                    <td>${avatar}${escHtml(dl.creator_name || '')}</td>
-                    <td class="title-cell">${dl.bvid ? `<a href="https://www.bilibili.com/video/${escHtml(dl.bvid)}" target="_blank" title="${escHtml(dl.title || '')}">${escHtml(dl.title || '')}</a>` : escHtml(dl.title || '')}</td>
+                    <td class="cell-truncate" title="${escHtml(dl.platform_name || '')}">${dl.platform_url ? `<a href="${escAttr(dl.platform_url)}" target="_blank">${escHtml(dl.platform_name || '')}</a>` : escHtml(dl.platform_name || '')}</td>
+                    <td class="cell-truncate" title="${escHtml(dl.creator_name || '')}">${avatar}${escHtml(dl.creator_name || '')}</td>
+                    <td class="title-cell">${dl.bvid ? `<a href="${dl.platform_name === 'youtube' ? 'https://www.youtube.com/watch?v=' + escHtml(dl.bvid) : 'https://www.bilibili.com/video/' + escHtml(dl.bvid)}" target="_blank" title="${escHtml(dl.title || '')}">${escHtml(dl.title || '')}</a>` : escHtml(dl.title || '')}</td>
                     <td>${tagsHtml || '-'}</td>
                     <td>${dl.duration ? formatDuration(dl.duration) : '-'}</td>
                     <td>${escHtml(dl.resolution || '')}</td>
                     <td><span class="status status-${dl.status}">${dl.status}</span></td>
                     <td>${formatSize(dl.file_size)}</td>
                     <td>${progressCell}</td>
-                    <td class="error-cell">${dl.error_msg ? `<span class="task-error" title="${escHtml(dl.error_msg)}" data-error="${escAttr(dl.error_msg)}">${escHtml(dl.error_msg.length > 30 ? dl.error_msg.substring(0, 30) + '...' : dl.error_msg)}</span>` : ''}</td>
-                    <td>${dl.status === 'completed' ? `<button class="btn btn-success btn-sm" onclick="playVideo(${dl.id},'${escAttr(dl.title || '')}')">播放</button> ` : ''}${dl.status !== 'downloading' ? `<button class="btn btn-primary btn-sm" onclick="downloadSingle(${dl.id})">下载</button> ` : ''}${dl.status === 'failed' ? `<button class="btn btn-success btn-sm" onclick="retryDownload(${dl.id})">重试</button> ` : ''}<button class="btn btn-danger btn-sm" onclick="deleteDownload(${dl.id})">删除</button></td>
+                    <td class="error-cell">${dl.error_msg ? `<span class="task-error" data-error="${escAttr(dl.error_msg)}" ondblclick="navigator.clipboard.writeText(this.dataset.error);this.style.outline='2px solid #00a1d6';setTimeout(()=>this.style.outline='',600)"></span>` : ''}</td>
+                    <td>${dl.status === 'completed' ? `<button class="btn btn-success btn-sm" onclick="playVideo(${dl.id},'${escAttr(dl.title || '')}')">播放</button> ` : ''}${dl.status === 'pending' ? `<button class="btn btn-primary btn-sm" onclick="downloadSingle(${dl.id})">下载</button>` : ''}${dl.status === 'failed' ? `<button class="btn btn-success btn-sm" onclick="retryDownload(${dl.id})">重试</button>` : ''}<button class="btn btn-danger btn-sm" onclick="deleteDownload(${dl.id})">删除</button></td>
                 </tr>`;
             }).join('');
 
@@ -968,17 +1035,25 @@
                         body: JSON.stringify({ space_url: url }),
                     });
                     const result = await resp.json();
-                    if (result.ok) ok++; else { fail++; alert(`发布失败 [${url}]: ${result.error || ''}`); }
+                    if (result.ok) ok++;
+                    else {
+                        fail++;
+                        const msg = result.error || '';
+                        const isUnsupported = msg.includes('暂不支持') || msg.includes('无法识别');
+                        if (isUnsupported) {
+                            showTip(`该平台暂不支持: ${url}`);
+                        } else {
+                            alert(`发布失败 [${url}]: ${msg}`);
+                        }
+                    }
                 } catch (e) { fail++; alert(`请求失败 [${url}]: ${e.message}`); }
             }
             if (fail === 0) document.getElementById('task-url').value = '';
-            loadTasks(1);
             if (urls.length > 1) alert(`提交完成: ${ok} 成功, ${fail} 失败`);
         }
 
         async function retryTask(id) {
             await fetch(`/api/tasks/${id}/retry`, { method: 'POST' });
-            loadTasks(taskPage);
         }
 
         async function taskLogin(id) {
@@ -987,7 +1062,6 @@
             const result = await resp.json();
             if (result.ok) {
                 await fetch(`/api/tasks/${id}/retry`, { method: 'POST' });
-                loadTasks(taskPage);
             } else {
                 alert('扫码登录失败: ' + (result.error || '未知错误'));
             }
@@ -995,25 +1069,38 @@
 
         async function pauseTask(id) {
             await fetch(`/api/tasks/${id}/pause`, { method: 'POST' });
-            loadTasks(taskPage);
         }
 
         async function startTask(id) {
             await fetch(`/api/tasks/${id}/resume`, { method: 'POST' });
-            loadTasks(taskPage);
         }
 
         async function resetDownloads(id) {
             if (!confirm('确认重置下载？\n\n已完成的视频保持不变，仅重新下载失败/跳过的视频。\n同时会通过API补全之前采集遗漏的视频。')) return;
-            await fetch(`/api/tasks/${id}/reset-downloads`, { method: 'POST' });
-            loadTasks(taskPage);
+            // 乐观地立即清空错误显示
+            const errSpan = document.querySelector(`tr:has(button[onclick="resetDownloads(${id})"]) .task-error`);
+            if (errSpan) { errSpan.textContent = '-'; errSpan.title = ''; }
+            try {
+                const resp = await fetch(`/api/tasks/${id}/reset-downloads`, { method: 'POST' });
+                const result = await resp.json();
+                if (!result.ok) {
+                    alert('重置下载失败: ' + (result.error || '未知错误'));
+                } else if (result.message) {
+                    alert(result.message);
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
         }
 
         async function deleteTask(id) {
             if (!confirm('确认删除该任务？关联的下载记录和视频信息将一并删除。')) return;
-            await fetch(`/api/tasks/${id}/delete`, { method: 'POST' });
-            loadTasks(taskPage);
-            loadStats();
+            const resp = await fetch(`/api/tasks/${id}/delete`, { method: 'POST' });
+            if (!resp.ok) {
+                alert('删除失败');
+                return;
+            }
+            // 广播通知前端刷新，无需手动 loadDownloads/loadTasks
         }
 
         async function storageCheck() {
@@ -1032,9 +1119,6 @@
                 } else {
                     alert('存储检测完成:\n  路径已更新: ' + moved + ' 个\n  文件不存在(待下载): ' + missing + ' 个\n  检查总数: ' + total + ' 个');
                 }
-                downloadPage = 1;
-                loadStats();
-                loadDownloads(1);
             } catch (e) {
                 alert('请求失败: ' + e.message);
             }
@@ -1053,10 +1137,6 @@
                 alert('请求失败: ' + e.message);
                 return;
             }
-            downloadPage = 1;
-            loadStats();
-            loadDownloads(1);
-            loadFilters();
         }
 
         async function startDownloads() {
@@ -1099,9 +1179,9 @@
         async function deleteDownload(id) {
             if (!confirm('确认删除该下载记录？')) return;
             try {
-                await fetch(`/api/downloads/${id}/delete`, { method: 'DELETE' });
-                loadStats();
-                loadDownloads(downloadPage);
+                const resp = await fetch(`/api/downloads/${id}/delete`, { method: 'DELETE' });
+                if (!resp.ok) { alert('删除失败'); return; }
+                // 广播通知前端刷新，无需手动 loadDownloads/loadTasks
             } catch (e) { alert('删除失败: ' + e.message); }
         }
 
@@ -1109,11 +1189,10 @@
             try {
                 const resp = await fetch(`/api/downloads/${id}/retry`, { method: 'POST' });
                 const result = await resp.json();
-                if (result.ok) {
-                    loadStats();
-                    loadDownloads(downloadPage);
-                } else {
+                if (!result.ok) {
                     alert(result.error || '重试失败');
+                } else {
+                    await tryStartDownloads();
                 }
             } catch (e) { alert('请求失败: ' + e.message); }
         }
@@ -1122,13 +1201,22 @@
             try {
                 const resp = await fetch(`/api/downloads/${id}/retry`, { method: 'POST' });
                 const result = await resp.json();
-                if (result.ok) {
-                    loadStats();
-                    loadDownloads(downloadPage);
-                } else {
+                if (!result.ok) {
                     alert(result.error || '下载失败');
+                } else {
+                    await tryStartDownloads();
                 }
             } catch (e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function tryStartDownloads() {
+            try {
+                const resp = await fetch('/api/downloads/start', { method: 'POST' });
+                const result = await resp.json();
+                if (result.ok) {
+                    updateStartPauseButtons(true);
+                }
+            } catch (e) {}
         }
 
         function toggleDlSelectAll(checked) {
@@ -1154,11 +1242,23 @@
                     body: JSON.stringify({ ids }),
                 });
                 const result = await resp.json();
-                if (result.ok) {
-                    loadStats();
-                    loadDownloads(downloadPage);
-                } else {
+                if (!result.ok) {
                     alert(result.error || '下载失败');
+                }
+            } catch (e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function retryFailedDownloads() {
+            try {
+                const resp = await fetch('/api/downloads/batch-retry-failed', { method: 'POST' });
+                const result = await resp.json();
+                if (!result.ok) {
+                    alert(result.error || '重试失败');
+                } else if (result.reset_count === 0) {
+                    alert('没有失败的视频需要重试');
+                } else {
+                    loadDownloads(downloadPage);
+                    loadStats();
                 }
             } catch (e) { alert('请求失败: ' + e.message); }
         }
@@ -1184,7 +1284,6 @@
         async function forceTask(id) {
             if (!confirm('确认强制重新抓取并下载该UP主的所有视频？')) return;
             await fetch(`/api/tasks/${id}/force`, { method: 'POST' });
-            loadTasks(taskPage);
         }
 
         async function editTaskUrl(id, currentUrl) {
@@ -1197,9 +1296,7 @@
                     body: JSON.stringify({space_url: newUrl.trim()}),
                 });
                 const result = await resp.json();
-                if (result.ok) {
-                    loadTasks(taskPage);
-                } else {
+                if (!result.ok) {
                     alert('修改失败: ' + (result.error || ''));
                 }
             } catch (e) {
@@ -1235,7 +1332,7 @@
                 const hasCreator = !!t.creator_id;
                 const hasError = !!t.error_message;
                 const errorMsg = hasError
-                    ? `<span class="task-error" data-error="${escHtml(t.error_message)}" title="${escHtml(t.error_message)}&#10;双击复制">${escHtml(t.error_message)}</span>` : '-';
+                    ? `<span class="task-error" data-error="${escHtml(t.error_message)}" ondblclick="navigator.clipboard.writeText(this.dataset.error);this.style.outline='2px solid #00a1d6';setTimeout(()=>this.style.outline='',600)"></span>` : '-';
                 const cookieNeedLogin = t.cookie_status === 'login_required' || t.cookie_status === 'expired';
                 const errorNeedLogin = hasError && /登录|cookie|权限|403|login|过期|expired/i.test(t.error_message);
                 const showLogin = cookieNeedLogin || errorNeedLogin;
@@ -1277,9 +1374,11 @@
             document.getElementById('s-template').value = settings.name_template || '';
             document.getElementById('s-output').value = settings.output_dir || '';
             document.getElementById('s-webport').value = settings.web_port;
+            document.getElementById('s-yt-proxy').value = settings.youtube_proxy || '';
             const currentTheme = document.body.getAttribute('data-theme') || 'light';
             document.querySelectorAll('.theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === currentTheme));
             await checkCookieStatus();
+            await checkYtCookieStatus();
         }
 
         function closeSettings() {}
@@ -1328,6 +1427,83 @@
             } catch(e) { alert('请求失败: ' + e.message); }
         }
 
+        // ========== YouTube Cookie ==========
+        async function checkYtCookieStatus() {
+            try {
+                const resp = await fetch('/api/cookie/youtube/status');
+                const r = await resp.json();
+                const el = document.getElementById('yt-cookie-status');
+                if (r.valid) {
+                    el.innerHTML = '<span style="color:#52c41a">&#10004;</span> Cookie 有效 (' + r.cookie_count + ' 条)';
+                } else if (r.exists) {
+                    el.innerHTML = '<span style="color:#f5222d">&#10008;</span> Cookie 无效';
+                } else {
+                    el.innerHTML = '<span style="color:#faad14">&#9888;</span> 未配置（可从 Chrome 导入或手动粘贴）';
+                }
+            } catch(e) {
+                document.getElementById('yt-cookie-status').textContent = '检测失败';
+            }
+        }
+
+        async function importYtCookie() {
+            const text = prompt('请粘贴 YouTube Cookie 内容（Netscape 格式）:\n\n获取方式：\n1. 安装浏览器扩展 "Get cookies.txt"\n2. 在 YouTube 页面点击扩展导出\n3. 将全部内容粘贴到下方');
+            if (text === null || !text.trim()) return;
+            try {
+                const resp = await fetch('/api/cookie/youtube/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie_text: text.trim() }),
+                });
+                const result = await resp.json();
+                if (result.ok) {
+                    await checkYtCookieStatus();
+                } else {
+                    alert('导入失败: ' + (result.error || '未知错误'));
+                }
+            } catch(e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function importYtCookieFromChrome() {
+            try {
+                const resp = await fetch('/api/cookie/youtube/import-chrome', { method: 'POST' });
+                const result = await resp.json();
+                if (result.ok) {
+                    showTip('已从 Chrome 导入 YouTube Cookie');
+                    await checkYtCookieStatus();
+                } else {
+                    alert('导入失败: ' + (result.error || '未知错误'));
+                }
+            } catch(e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function clearYtCookie() {
+            try {
+                await fetch('/api/cookie/youtube/clear', { method: 'POST' });
+                await checkYtCookieStatus();
+            } catch(e) { alert('请求失败: ' + e.message); }
+        }
+
+        function switchCookieTab(platform) {
+            document.querySelectorAll('.cookie-tab').forEach(t => t.classList.toggle('active', t.dataset.platform === platform));
+            document.querySelectorAll('.cookie-panel').forEach(p => {
+                if (p.id === 'cookie-panel-' + platform) p.removeAttribute('data-hidden');
+                else p.setAttribute('data-hidden', '');
+            });
+        }
+
+        async function detectProxy() {
+            try {
+                const resp = await fetch('/api/detect-proxy');
+                const r = await resp.json();
+                if (r.proxy) {
+                    document.getElementById('s-yt-proxy').value = r.proxy;
+                    alert('已检测到系统代理: ' + r.proxy + '\n请点击保存设置生效。');
+                } else {
+                    alert('未检测到系统代理设置。');
+                }
+            } catch(e) { alert('检测失败: ' + e.message); }
+        }
+
         async function saveSettingsFromUI() {
             const data = {
                 max_concurrent_downloads: parseInt(document.getElementById('s-concurrency').value) || 5,
@@ -1337,6 +1513,7 @@
                 name_template: document.getElementById('s-template').value,
                 output_dir: document.getElementById('s-output').value,
                 web_port: parseInt(document.getElementById('s-webport').value) || 8080,
+                youtube_proxy: document.getElementById('s-yt-proxy').value.trim(),
             };
             try {
                 const resp = await fetch('/api/settings', {
@@ -1347,6 +1524,7 @@
                 const result = await resp.json();
                 if (result.ok) {
                     closeSettings();
+                    showTip('设置已保存');
                 } else {
                     alert('保存失败: ' + (result.error || '未知错误'));
                 }

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 # bilibili_downloader/config.py
@@ -29,7 +30,9 @@ DEFAULT_NAME_TEMPLATE = "{title}\u3010{creator}-{section}\u3011"
 DEFAULT_DB_PATH = "bilibili_downloader.db"
 
 # Cookie cache
-DEFAULT_COOKIE_CACHE_PATH = "bilibili_cookies.json"
+COOKIE_DIR = "cookies"
+DEFAULT_COOKIE_CACHE_PATH = os.path.join(COOKIE_DIR, "bilibili_cookies.json")
+DEFAULT_YOUTUBE_COOKIE_CACHE_PATH = os.path.join(COOKIE_DIR, "youtube_cookies.txt")
 
 # Web
 DEFAULT_WEB_PORT = 8080
@@ -37,6 +40,9 @@ DEFAULT_WEB_PORT = 8080
 # Bilibili API base
 BILIBILI_API_BASE = "https://api.bilibili.com"
 BILIBILI_SPACE_URL_PATTERN = r"https?://space\.bilibili\.com/(\d+)"
+
+# YouTube
+YOUTUBE_PLAYLIST_URL_PATTERN = r"https?://(?:www\.)?youtube\.com/playlist\?list=([A-Za-z0-9_-]+)"
 
 # Settings persistence
 SETTINGS_PATH = "bilibili_settings.json"
@@ -49,6 +55,7 @@ _DEFAULTS = {
     "output_dir": "./downloads",
     "web_port": DEFAULT_WEB_PORT,
     "download_speed_limit": DEFAULT_SPEED_LIMIT_MB,
+    "youtube_proxy": "",
 }
 
 
