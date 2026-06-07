@@ -38,6 +38,7 @@ class YouTubePlatform(BasePlatform):
 
     async def scrape(self, creator_id: str, **kwargs) -> dict:
         """使用 yt-dlp extract_info 获取播放列表视频元数据。"""
+        import asyncio
         import yt_dlp
 
         playlist_url = f"https://www.youtube.com/playlist?list={creator_id}"
@@ -47,33 +48,37 @@ class YouTubePlatform(BasePlatform):
             'no_warnings': True,
         }
 
-        videos: list[dict] = []
-        playlist_title = None
-
-        try:
+        def _extract():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(playlist_url, download=False)
-                if info:
-                    playlist_title = info.get("title")
-                    entries = info.get("entries", [])
-                    for entry in entries:
-                        if entry is None:
-                            continue
-                        videos.append({
-                            "remote_id": entry.get("id", ""),
-                            "title": entry.get("title", ""),
-                            "duration": entry.get("duration", 0) or 0,
-                            "pubdate": entry.get("upload_date") or entry.get("upload_date_iso8601"),
-                            "extra": {
-                                "thumbnail": entry.get("thumbnail"),
-                                "url": entry.get("url"),
-                                "channel": entry.get("channel"),
-                            },
-                            "tags": entry.get("tags", []) or [],
-                        })
+                return ydl.extract_info(playlist_url, download=False)
+
+        loop = asyncio.get_event_loop()
+        try:
+            info = await loop.run_in_executor(None, _extract)
         except Exception as e:
             logger.error(f"[YouTubePlatform] 播放列表获取失败: {e}")
             raise
+
+        videos: list[dict] = []
+        playlist_title = None
+        if info:
+            playlist_title = info.get("title")
+            entries = info.get("entries", [])
+            for entry in entries:
+                if entry is None:
+                    continue
+                videos.append({
+                    "remote_id": entry.get("id", ""),
+                    "title": entry.get("title", ""),
+                    "duration": entry.get("duration", 0) or 0,
+                    "pubdate": entry.get("upload_date") or entry.get("upload_date_iso8601"),
+                    "extra": {
+                        "thumbnail": entry.get("thumbnail"),
+                        "url": entry.get("url"),
+                        "channel": entry.get("channel"),
+                    },
+                    "tags": entry.get("tags", []) or [],
+                })
 
         logger.info(f"[YouTubePlatform] 播放列表 '{playlist_title}': {len(videos)} 个视频")
 
