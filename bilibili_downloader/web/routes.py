@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 def create_routes(db, env, task_service=None):
+    async def close_tab(request: Request) -> HTMLResponse:
+        """重启时通知浏览器标签页关闭自身。"""
+        return HTMLResponse("<html><body><script>window.close();if(!window.closed)location.href='about:blank';</script></body></html>")
+
     async def index(request: Request) -> HTMLResponse:
         from bilibili_downloader.config import SETTINGS_PATH
         stats = await db.get_stats()
@@ -491,4 +495,5 @@ def create_routes(db, env, task_service=None):
         "/api/cookie/status": (api_cookie_status, ["GET"]),
         "/api/cookie/clear": (api_cookie_clear, ["POST"]),
         "/api/trigger-login": (api_trigger_login, ["POST"]),
+        "/close-tab": (close_tab, ["GET"]),
     }
