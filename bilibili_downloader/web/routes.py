@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -88,7 +89,8 @@ def create_routes(db, env, task_service=None):
             logger.info(f"保存设置: {data}")
             current = load_settings()
             allowed_keys = {"max_concurrent_downloads", "max_concurrent_api",
-                             "resolution_priority", "name_template", "output_dir", "web_port"}
+                             "resolution_priority", "name_template", "output_dir", "web_port",
+                             "download_speed_limit", "youtube_proxy"}
             for key, value in data.items():
                 if key in allowed_keys:
                     current[key] = value
@@ -357,6 +359,34 @@ def create_routes(db, env, task_service=None):
             started = True
         return JSONResponse({"ok": True, "reset_count": reset_count, "started": started})
 
+    async def api_download_batch_retry_failed(request: Request) -> JSONResponse:
+        """Reset all failed downloads to pending and start downloading."""
+        if not task_service:
+            return JSONResponse({"ok": False, "error": "TaskService not available"}, status_code=503)
+        reset_count = 0
+        page = 1
+        while True:
+            result = await db.get_all_downloads(status="failed", page=page, page_size=200)
+            items = result["items"] if isinstance(result, dict) else result
+            if not items:
+                break
+            for dl in items:
+                await db.update_download_status(dl["id"], "pending", error_msg=None)
+                reset_count += 1
+            total = result.get("total", 0) if isinstance(result, dict) else 0
+            if reset_count >= total:
+                break
+            page += 1
+        if reset_count > 0:
+            ws = get_ws_manager()
+            await ws.broadcast({"type": "task_status", "task_id": 0, "data": {"status": "refresh"}})
+            await ws.broadcast({"type": "download_progress", "status": "refresh"})
+        started = False
+        if reset_count > 0 and not task_service.is_downloading():
+            await task_service.start_downloads()
+            started = True
+        return JSONResponse({"ok": True, "reset_count": reset_count, "started": started})
+
     async def api_download_delete(request: Request) -> JSONResponse:
         """Delete a single download record."""
         download_id = int(request.path_params["download_id"])
@@ -461,12 +491,157 @@ def create_routes(db, env, task_service=None):
             return JSONResponse({"ok": True, "message": "QR login completed"})
         return JSONResponse({"ok": False, "error": error_msg or "QR login failed or timed out"}, status_code=500)
 
+    async def api_youtube_cookie_status(request: Request) -> JSONResponse:
+        """Check YouTube cookie status."""
+        from bilibili_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
+        import json as _json
+        cookie_path = DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
+        if not os.path.exists(cookie_path):
+            return JSONResponse({"valid": False, "exists": False})
+        try:
+            with open(cookie_path, encoding="utf-8") as f:
+                lines = f.readlines()
+            if not lines:
+                return JSONResponse({"valid": False, "exists": True})
+            # 统计有效 cookie 行数
+            count = sum(1 for l in lines if l.strip() and not l.startswith("#"))
+            return JSONResponse({"valid": True, "exists": True, "cookie_count": count})
+        except Exception as e:
+            return JSONResponse({"valid": False, "exists": True, "error": str(e)})
+
+    async def api_youtube_cookie_import(request: Request) -> JSONResponse:
+        """Import YouTube cookie text (Netscape format)."""
+        from bilibili_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
+        data = await request.json()
+        cookie_text = data.get("cookie_text", "").strip()
+        if not cookie_text:
+            return JSONResponse({"ok": False, "error": "Cookie 内容为空"})
+        try:
+            os.makedirs(os.path.dirname(DEFAULT_YOUTUBE_COOKIE_CACHE_PATH), exist_ok=True)
+            with open(DEFAULT_YOUTUBE_COOKIE_CACHE_PATH, "w", encoding="utf-8") as f:
+                f.write(cookie_text)
+            return JSONResponse({"ok": True})
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)})
+
+    async def _extract_chrome_cookies_to_netscape() -> tuple[str | None, str | None]:
+        """从 Chrome 浏览器提取 YouTube/Google cookie，转为 Netscape 格式。
+
+        使用 browser_cookie3 处理 Chrome v10 及 App-Bound Encryption，
+        无需关闭 Chrome 即可提取。
+        返回 (netscape_content, error_message)。
+        """
+        try:
+            import browser_cookie3
+        except ImportError:
+            return None, "缺少 browser-cookie3 依赖，请运行: pip install browser-cookie3"
+
+        try:
+            # browser_cookie3 自动处理 v10 + App-Bound Encryption
+            cookies = browser_cookie3.chrome(domain_name=".youtube.com")
+            cookies_list = list(cookies)
+        except Exception as e:
+            return None, f"Chrome cookie 提取失败: {e}"
+
+        if not cookies_list:
+            return None, "未找到 YouTube 相关 cookie"
+
+        lines = ["# Netscape HTTP Cookie File"]
+        lines.append("# Generated by bilibili_downloader from Chrome")
+        lines.append("")
+        for c in cookies_list:
+            # Netscape 格式: domain, domain_flag, path, secure, expiration, name, value
+            # domain_flag: TRUE if domain starts with '.' (subdomain cookie)
+            domain = c.domain if c.domain else ""
+            domain_flag = "TRUE" if domain.startswith(".") else "FALSE"
+            path = c.path if c.path else "/"
+            secure = "TRUE" if c.secure else "FALSE"
+            exp = int(c.expires) if c.expires else 0
+            name = c.name if c.name else ""
+            value = c.value if c.value else ""
+            lines.append(f"{domain}\t{domain_flag}\t{path}\t{secure}\t{exp}\t{name}\t{value}")
+
+        # 也获取 google.com cookie（YouTube 认证需要）
+        try:
+            google_cookies = browser_cookie3.chrome(domain_name=".google.com")
+            for c in google_cookies:
+                name = c.name or ""
+                # 避免重复
+                if any(name == line.split("\t")[5] for line in lines[3:] if "\t" in line):
+                    continue
+                domain = c.domain or ""
+                domain_flag = "TRUE" if domain.startswith(".") else "FALSE"
+                path = c.path if c.path else "/"
+                secure = "TRUE" if c.secure else "FALSE"
+                exp = int(c.expires) if c.expires else 0
+                value = c.value or ""
+                lines.append(f"{domain}\t{domain_flag}\t{path}\t{secure}\t{exp}\t{name}\t{value}")
+        except Exception:
+            pass
+
+        cookie_lines = [l for l in lines[3:] if l.strip()]
+        if not cookie_lines:
+            return None, "Cookie 提取失败"
+
+        return "\n".join(lines) + "\n", None
+
+    async def api_youtube_cookie_import_from_chrome(request: Request) -> JSONResponse:
+        """Import YouTube cookies from Chrome browser (copies DB to temp to avoid lock)."""
+        from bilibili_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
+        try:
+            content, error = await _extract_chrome_cookies_to_netscape()
+            if error:
+                return JSONResponse({"ok": False, "error": error})
+
+            os.makedirs(os.path.dirname(DEFAULT_YOUTUBE_COOKIE_CACHE_PATH), exist_ok=True)
+            with open(DEFAULT_YOUTUBE_COOKIE_CACHE_PATH, "w", encoding="utf-8") as f:
+                f.write(content)
+
+            return JSONResponse({"ok": True})
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)})
+
+    async def api_youtube_cookie_clear(request: Request) -> JSONResponse:
+        """Clear YouTube cookie file."""
+        from bilibili_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
+        try:
+            os.remove(DEFAULT_YOUTUBE_COOKIE_CACHE_PATH)
+        except FileNotFoundError:
+            pass
+        return JSONResponse({"ok": True})
+
+    async def api_detect_proxy(request: Request) -> JSONResponse:
+        """Detect system proxy settings."""
+        proxy = ""
+        if sys.platform == "win32":
+            try:
+                import winreg
+                # IE/系统代理
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                )
+                proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+                if proxy_enable:
+                    proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
+                    if proxy_server:
+                        proxy = f"http://{proxy_server}"
+                winreg.CloseKey(key)
+            except Exception:
+                pass
+        else:
+            # Unix: 检查环境变量
+            import os as _os
+            proxy = _os.environ.get("https_proxy") or _os.environ.get("HTTPS_PROXY") or _os.environ.get("http_proxy") or _os.environ.get("HTTP_PROXY") or ""
+        return JSONResponse({"proxy": proxy})
+
     return {
         "/": (index, ["GET"]),
         "/api/stats": (api_stats, ["GET"]),
         "/api/downloads": (api_downloads, ["GET"]),
         "/api/downloads/clear": (api_clear_downloads, ["POST"]),
         "/api/downloads/batch-start": (api_download_batch_start, ["POST"]),
+        "/api/downloads/batch-retry-failed": (api_download_batch_retry_failed, ["POST"]),
         "/api/downloads/start": (api_download_start, ["POST"]),
         "/api/downloads/pause": (api_download_pause, ["POST"]),
         "/api/downloads/status": (api_download_status, ["GET"]),
@@ -494,6 +669,11 @@ def create_routes(db, env, task_service=None):
         "/api/tasks/{task_id}/delete": (api_task_delete, ["POST"]),
         "/api/cookie/status": (api_cookie_status, ["GET"]),
         "/api/cookie/clear": (api_cookie_clear, ["POST"]),
+        "/api/cookie/youtube/status": (api_youtube_cookie_status, ["GET"]),
+        "/api/cookie/youtube/import": (api_youtube_cookie_import, ["POST"]),
+        "/api/cookie/youtube/import-chrome": (api_youtube_cookie_import_from_chrome, ["POST"]),
+        "/api/cookie/youtube/clear": (api_youtube_cookie_clear, ["POST"]),
+        "/api/detect-proxy": (api_detect_proxy, ["GET"]),
         "/api/trigger-login": (api_trigger_login, ["POST"]),
         "/close-tab": (close_tab, ["GET"]),
     }

@@ -469,6 +469,9 @@ class Database:
                 "SELECT COUNT(*) FROM download WHERE status=?", (status,)
             )
             result[status] = (await cur.fetchone())[0]
+        # 下载管理总数 = download 表所有记录（等于各状态之和）
+        cur = await self._xq("SELECT COUNT(*) FROM download")
+        result["total_downloads"] = (await cur.fetchone())[0]
         return result
 
     # --- Task ---
@@ -736,6 +739,10 @@ class Database:
         failed = counts.get("failed", 0)
         pending = counts.get("pending", 0)
 
+        # 同步实际视频总数
+        cur_v = await self._xq("SELECT COUNT(*) FROM video WHERE creator_id=?", (cid,))
+        actual_video_count = (await cur_v.fetchone())[0]
+
         if downloading > 0:
             new_status = "downloading"
         elif pending > 0:
@@ -753,6 +760,8 @@ class Database:
             error_msg = None if new_status in ("pending", "downloading") else task.get("error_message")
             await self.update_task_status(
                 task_id, new_status,
+                total_videos=actual_video_count,
+                scraped_videos=actual_video_count,
                 downloaded_videos=completed,
                 total_downloads=total,
                 error_message=error_msg,

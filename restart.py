@@ -141,8 +141,11 @@ def main():
 
     threading.Thread(target=wait_and_open, daemon=True).start()
 
-    from bilibili_downloader.cli.main import main as cli_main
-    sys.exit(cli_main(["web"]))
+    # 启动新服务进程，restart.py 随后退出
+    venv_python = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "Scripts", "python.exe")
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
+    subprocess.Popen([venv_python, "-m", "bilibili_downloader.cli.main", "web"])
 
 
 if __name__ == "__main__":

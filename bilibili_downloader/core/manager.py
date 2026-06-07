@@ -38,7 +38,7 @@ class DownloadManager:
                 queue.append(video)
         return queue
 
-    async def run(self, session, auto_discover=True):
+    async def run(self, session, auto_discover=True, exclude_platforms: set[str] | None = None):
         # Auto-discover: enqueue un-downloaded videos for all creators
         # Web模式下由TaskService管理，不需要auto-discover
         if auto_discover:
@@ -68,6 +68,8 @@ class DownloadManager:
                 break
             page += 1
         pending_items = all_pending
+        if exclude_platforms:
+            pending_items = [d for d in pending_items if d.get("platform_name") not in exclude_platforms]
         if not pending_items:
             logger.info("No pending downloads")
             return

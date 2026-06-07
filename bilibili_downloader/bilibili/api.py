@@ -64,6 +64,11 @@ class BilibiliAPI:
         pages = video_data.get("pages", [])
         cid = pages[0]["cid"] if pages else None
 
+        # 检测充电专属视频
+        if video_data.get("is_upower_exclusive"):
+            logger.info(f"[api] {bvid} 为UP主充电专属视频，跳过")
+            return {"cid": cid, "tags": [], "is_upower_exclusive": True}
+
         # Fetch tags from dedicated tag endpoint (more reliable than view API)
         tags = []
         try:

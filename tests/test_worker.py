@@ -45,7 +45,7 @@ def _mock_session_get(responses):
     manager), not an async function -- otherwise session.get() would return a
     coroutine which cannot be used with ``async with``.
     """
-    def _get(url, headers=None):
+    def _get(url, headers=None, timeout=None):
         return _MockCtx(responses.pop(0))
     mock = MagicMock()
     mock.get = MagicMock(side_effect=_get)

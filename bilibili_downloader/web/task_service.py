@@ -10,6 +10,7 @@ from bilibili_downloader.config import (
     DEFAULT_COOKIE_CACHE_PATH,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_RESOLUTION_PRIORITY,
+    DEFAULT_YOUTUBE_COOKIE_CACHE_PATH,
     MAX_CONCURRENT_API_REQUESTS,
     MAX_CONCURRENT_DOWNLOADS,
     load_settings,
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _COOKIE_FILES = {
     "bilibili": DEFAULT_COOKIE_CACHE_PATH,
+    "youtube": DEFAULT_YOUTUBE_COOKIE_CACHE_PATH,
 }
 
 
@@ -40,6 +42,8 @@ class TaskService:
         self._download_cancel = asyncio.Event()
         self._download_task: asyncio.Task | None = None
         self._registry = create_registry()
+        self._login_lock = asyncio.Lock()  # 防止并发QR登录
+        self._login_in_progress = False  # 前端状态标记
 
     def _add_bg_task(self, coro) -> asyncio.Task:
         """创建后台任务并注册自动清理回调。"""
@@ -77,7 +81,16 @@ class TaskService:
         # 识别平台
         platform = self._registry.identify(space_url)
         if not platform:
-            raise ValueError(f"无法识别的 URL: {space_url}")
+            # 不支持的平台直接提示开发中
+            db_platform = await self.db.get_platform_by_name("unknown")
+            if not db_platform:
+                pid = await self.db.insert_platform("unknown", "")
+            else:
+                pid = db_platform["id"]
+            task_id = await self.db.insert_task(platform_id=pid, space_url=space_url)
+            await self.db.update_task_status(task_id, "failed", error_message="该平台暂不支持，开发中")
+            await self._broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "failed", "error_message": "该平台暂不支持，开发中"}})
+            return task_id
 
         parsed = platform.parse_url(space_url)
         space_uid = parsed["creator_id"]
@@ -192,14 +205,23 @@ class TaskService:
             cookie_valid = await self._check_cookie(platform.name)
             logger.info(f"[TaskService] 任务 {task_id} Cookie检测结果: {'有效' if cookie_valid else '无效'}")
             if not cookie_valid:
-                await self.db.update_task_status(task_id, "init", cookie_status="login_required")
-                await self._broadcast({"type": "login_required", "task_id": task_id, "message": "Cookie已失效，请扫码登录"})
-                await self._broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "init"}})
-                logged_in = await self._wait_for_login(platform.name, timeout=120)
-                if not logged_in:
-                    await self.db.update_task_status(task_id, "failed", error_message="登录超时", cookie_status="expired")
-                    await self._broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "failed"}})
-                    return
+                # 检查是否已有登录在进行中
+                if self._login_in_progress:
+                    logger.info(f"[TaskService] 任务 {task_id} 等待进行中的登录完成")
+                    logged_in = await self._wait_for_login(platform.name, timeout=120)
+                    if not logged_in:
+                        await self.db.update_task_status(task_id, "failed", error_message="等待登录超时", cookie_status="expired")
+                        await self._broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "failed"}})
+                        return
+                else:
+                    await self.db.update_task_status(task_id, "init", cookie_status="login_required")
+                    await self._broadcast({"type": "login_required", "task_id": task_id, "message": "Cookie已失效，请扫码登录"})
+                    await self._broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "init"}})
+                    logged_in = await self._wait_for_login(platform.name, timeout=120)
+                    if not logged_in:
+                        await self.db.update_task_status(task_id, "failed", error_message="登录超时", cookie_status="expired")
+                        await self._broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "failed"}})
+                        return
 
         # Phase 1: Scrape
         if self.is_paused(task_id):
@@ -255,7 +277,7 @@ class TaskService:
             except ValueError as scrape_err:
                 err_msg = str(scrape_err)
                 if "-403" in err_msg and platform.needs_cookie():
-                    logger.warning(f"[TaskService] 任务 {task_id} 采集遇到 -403，尝试重新登录")
+                    logger.warning(f"[TaskService] 任务 {task_id} 采集遇到 -403")
                     # 关闭当前浏览器（释放资源）
                     if browser:
                         try:
@@ -263,21 +285,30 @@ class TaskService:
                         except Exception:
                             pass
                         browser = None
-                    # 触发 QR 登录
-                    await self.db.update_task_status(task_id, "init", cookie_status="login_required")
-                    await self._broadcast({"type": "login_required", "task_id": task_id, "message": "Cookie已失效（-403），请扫码登录"})
-                    logged_in = await self._wait_for_login(platform.name, timeout=120)
-                    if not logged_in:
-                        await self.db.update_task_status(task_id, "failed", error_message="登录超时（-403重试）", cookie_status="expired")
-                        await self._broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "failed"}})
-                        return
+
+                    # 如果当前没有登录在进行中，触发一次QR登录
+                    if not self._login_in_progress:
+                        await self.db.update_task_status(task_id, "init", cookie_status="login_required")
+                        await self._broadcast({"type": "login_required", "task_id": task_id, "message": "采集遇到权限限制(-403)，请扫码登录"})
+                        logged_in = await self._wait_for_login(platform.name, timeout=120)
+                        if not logged_in:
+                            await self.db.update_task_status(task_id, "failed", error_message="登录超时（-403重试）", cookie_status="expired")
+                            await self._broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "failed"}})
+                            return
+                    else:
+                        # 已有登录在进行中，等待完成
+                        logged_in = await self._wait_for_login(platform.name, timeout=120)
+                        if not logged_in:
+                            await self.db.update_task_status(task_id, "failed", error_message="等待登录超时", cookie_status="expired")
+                            return
+
                     # 重新加载 cookie 和浏览器，重试采集
                     cookies = self._load_cookies(platform.name)
                     if platform.needs_browser():
                         from bilibili_downloader.browser import PlaywrightBrowser
                         browser = PlaywrightBrowser(headless=True, cookies=cookies)
                         await browser.start()
-                    scrape_kwargs = {"cookies": cookies, "browser": browser, "session": session}
+                    scrape_kwargs = {"cookies": cookies, "browser": browser, "session": session, "on_progress": _on_scrape_progress}
                     data = await platform.scrape(task["space_uid"], **scrape_kwargs)
                 else:
                     raise
@@ -353,9 +384,9 @@ class TaskService:
             videos = await self.db.get_videos_by_creator(cid)
             dl_count = 0
             resolution = resolution_priority[0] if resolution_priority else "720p"
-            # YouTube 使用 "best" 作为分辨率标识
+            # YouTube 下载时由 yt-dlp 动态选择最优格式
             if platform.name == "youtube":
-                resolution = "best"
+                resolution = "1080p"  # 默认占位，下载完成后会更新为实际值
             for video in videos:
                 filename = build_filename(
                     title=video["title"], creator=creator_info["name"] if creator_info else "",
@@ -376,15 +407,27 @@ class TaskService:
             await self._broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "failed"}})
 
     async def _check_cookie(self, platform_name: str) -> bool:
-        """Check if cookie is valid for a platform."""
+        """Check if cookie is valid for a platform.
+
+        Returns True if cookie is valid, False if missing or invalid.
+        Retries once on transient network errors to avoid false negatives.
+        """
         if platform_name == "bilibili":
             import aiohttp
             cookies = self._load_cookies(platform_name)
             if not cookies:
+                logger.info("[TaskService] Cookie文件不存在或为空")
                 return False
-            async with aiohttp.ClientSession() as session:
-                api = BilibiliAPI(session, cookies=cookies)
-                return await api.validate_cookie()
+            for attempt in range(2):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        api = BilibiliAPI(session, cookies=cookies)
+                        return await api.validate_cookie()
+                except Exception as e:
+                    logger.warning(f"[TaskService] Cookie检查异常 (尝试 {attempt+1}/2): {e}")
+                    if attempt == 0:
+                        await asyncio.sleep(1)
+            return False
         return True  # YouTube 不需要 cookie
 
     async def _wait_for_login(self, platform_name: str, timeout: int = 120) -> bool:
@@ -400,21 +443,34 @@ class TaskService:
             await asyncio.sleep(2)
 
     async def trigger_qr_login(self) -> tuple[bool, str]:
-        """Trigger QR code login in a headed browser. Returns (success, error_message)."""
-        from bilibili_downloader.browser import PlaywrightBrowser, save_cookies_to_file
-        from bilibili_downloader.cli.main import _qr_code_login
-        browser = PlaywrightBrowser(headless=False)
-        try:
-            await browser.start()
-            login_cookies = await _qr_code_login(browser.page)
-            cookie_path = self._get_cookie_file("bilibili") or DEFAULT_COOKIE_CACHE_PATH
-            save_cookies_to_file(login_cookies, cookie_path)
-            return True, ""
-        except Exception as e:
-            logger.error(f"QR login failed: {e}", exc_info=True)
-            return False, str(e)
-        finally:
-            await browser.close()
+        """Trigger QR code login in a headed browser. Returns (success, error_message).
+
+        Uses _login_lock to prevent concurrent login attempts.
+        """
+        if self._login_lock.locked():
+            logger.info("[TaskService] QR登录已在进行中，跳过重复请求")
+            return True, ""  # 告诉前端"成功"（另一个登录正在进行）
+        async with self._login_lock:
+            self._login_in_progress = True
+            try:
+                await self._broadcast({"type": "login_status", "status": "in_progress"})
+                from bilibili_downloader.browser import PlaywrightBrowser, save_cookies_to_file
+                from bilibili_downloader.cli.main import _qr_code_login
+                browser = PlaywrightBrowser(headless=False)
+                try:
+                    await browser.start()
+                    login_cookies = await _qr_code_login(browser.page)
+                    cookie_path = self._get_cookie_file("bilibili") or DEFAULT_COOKIE_CACHE_PATH
+                    save_cookies_to_file(login_cookies, cookie_path)
+                    return True, ""
+                except Exception as e:
+                    logger.error(f"QR login failed: {e}", exc_info=True)
+                    return False, str(e)
+                finally:
+                    await browser.close()
+            finally:
+                self._login_in_progress = False
+                await self._broadcast({"type": "login_status", "status": "done"})
 
     async def _broadcast(self, message: dict):
         if self.ws_manager:
@@ -422,6 +478,19 @@ class TaskService:
 
     async def start_downloads(self) -> tuple[bool, int]:
         """Start downloading all pending videos. Returns (started, pending_count)."""
+        # 检查上次下载任务是否已结束但标记未重置
+        if self._download_running:
+            task_done = self._download_task and self._download_task.done()
+            # 如果任务已结束，或者 DB 中没有任何 downloading 记录，说明管理器已停止工作
+            if task_done:
+                logger.warning("[TaskService] _download_running=True 但任务已结束，重置状态")
+                self._download_running = False
+            else:
+                active = await self.db.get_all_downloads(status="downloading", page=1, page_size=1)
+                active_count = active.get("total", 0) if isinstance(active, dict) else len(active)
+                if active_count == 0:
+                    logger.warning("[TaskService] _download_running=True 但无活跃下载，重置状态")
+                    self._download_running = False
         if self._download_running:
             return (False, -1)
         # Check pending count
@@ -438,6 +507,9 @@ class TaskService:
             return (False, 0)
         self._download_cancel.clear()
         self._download_running = True
+
+        # 分离 B 站和 YouTube 的 pending 下载
+        bilibili_pending = [d for d in all_pending if d.get("platform_name") != "youtube"]
 
         async def _run():
             try:
@@ -460,7 +532,7 @@ class TaskService:
                         ws_manager=self.ws_manager,
                         cancel_event=self._download_cancel,
                     )
-                    await manager.run(session, auto_discover=False)
+                    await manager.run(session, auto_discover=False, exclude_platforms={"youtube"})
 
                     # YouTube 下载（非 Bilibili 的 pending 下载）
                     if not self._download_cancel.is_set():
@@ -496,6 +568,12 @@ class TaskService:
         max_concurrent = settings.get("max_concurrent_downloads", MAX_CONCURRENT_DOWNLOADS)
         sem = asyncio.Semaphore(max_concurrent)
 
+        # YouTube cookie 文件路径
+        cookie_file = self._get_cookie_file("youtube")
+        import os
+        if not cookie_file or not os.path.exists(cookie_file):
+            cookie_file = ""
+
         async def _download_one(dl: dict):
             async with sem:
                 if self._download_cancel.is_set():
@@ -514,6 +592,8 @@ class TaskService:
                     cancel_event=self._download_cancel,
                     speed_limit_bps=speed_limit_bps,
                     creator_name=creator_name,
+                    proxy=settings.get("youtube_proxy", ""),
+                    cookie_file=cookie_file,
                 )
 
         tasks = [_download_one(dl) for dl in pending_downloads]

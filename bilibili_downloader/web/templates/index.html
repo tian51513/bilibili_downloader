@@ -228,6 +228,12 @@
         .settings-section .btn-save { display: block; width: 100%; padding: 10px 20px; margin-top: 8px; font-size: 14px; }
         .cookie-card { padding: 16px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; background: var(--bg-card); }
         .cookie-card h3 { font-size: 14px; margin: 0 0 12px; color: var(--text); font-weight: 600; }
+        .cookie-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+        .cookie-tab { padding: 6px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-muted); cursor: pointer; font-size: 13px; transition: all .15s; }
+        .cookie-tab:hover { border-color: #00a1d6; color: #00a1d6; }
+        .cookie-tab.active { background: #00a1d6; color: #fff; border-color: #00a1d6; }
+        .cookie-panel { display: block; }
+        .cookie-panel[data-hidden] { display: none; }
         .cookie-card .cookie-status { font-size: 13px; margin-bottom: 14px; line-height: 1.6; padding: 8px 12px; background: var(--bg); border-radius: 6px; }
         .cookie-card .cookie-status .valid { color: #52c41a; font-weight: 500; }
         .cookie-card .cookie-status .invalid { color: #f5222d; font-weight: 500; }
@@ -342,6 +348,7 @@
                 <span></span>
                 <div style="display:flex;gap:8px">
                     <button id="btn-dl-batch" class="btn btn-primary" disabled onclick="downloadSelected()">下载选中</button>
+                    <button id="btn-dl-retry-failed" class="btn btn-warning" onclick="retryFailedDownloads()">重试失败</button>
                     <button id="btn-dl-start" class="btn btn-success" onclick="startDownloads()">开始下载</button>
                     <button id="btn-dl-pause" class="btn btn-warning" style="display:none" onclick="pauseDownloads()">暂停下载</button>
                     <button class="btn btn-info" onclick="storageCheck()">存储检测</button>
@@ -445,15 +452,27 @@
         <div class="settings-section">
             <!-- Cookie 管理 -->
             <div class="cookie-card">
-                <h3>Bilibili Cookie 管理</h3>
-                <div class="cookie-status" id="cookie-status">检测中...</div>
-                <div class="cookie-actions">
-                    <button class="btn btn-warning" onclick="triggerLogin()">扫码登录</button>
-                    <button class="btn btn-danger btn-sm" onclick="clearCookie()">清除缓存</button>
+                <h3>Cookie 管理</h3>
+                <div class="cookie-tabs">
+                    <button class="cookie-tab active" data-platform="bilibili" onclick="switchCookieTab('bilibili')">Bilibili</button>
+                    <button class="cookie-tab" data-platform="youtube" onclick="switchCookieTab('youtube')">YouTube</button>
+                </div>
+                <div class="cookie-panel" id="cookie-panel-bilibili">
+                    <div class="cookie-status" id="cookie-status">检测中...</div>
+                    <div class="cookie-actions">
+                        <button class="btn btn-warning" onclick="triggerLogin()">扫码登录</button>
+                        <button class="btn btn-danger btn-sm" onclick="clearCookie()">清除缓存</button>
+                    </div>
+                </div>
+                <div class="cookie-panel" id="cookie-panel-youtube" data-hidden>
+                    <div class="cookie-status" id="yt-cookie-status">检测中...</div>
+                    <div class="cookie-actions">
+                        <button class="btn btn-warning" onclick="importYtCookie()">导入 Cookie</button>
+                        <button class="btn btn-primary btn-sm" onclick="importYtCookieFromChrome()">从 Chrome 导入</button>
+                        <button class="btn btn-danger btn-sm" onclick="clearYtCookie()">清除</button>
+                    </div>
                 </div>
             </div>
-
-            <!-- 下载设置 -->
             <div class="settings-group-title">下载设置</div>
             <div class="field">
                 <label>并发下载数</label>
@@ -491,6 +510,16 @@
                     <input type="text" id="s-output" placeholder="./downloads" style="flex:1">
                     <button type="button" class="btn btn-ghost" onclick="browseDirectory()">浏览</button>
                 </div>
+            </div>
+
+            <hr class="settings-divider">
+
+            <!-- 网络设置 -->
+            <div class="settings-group-title">网络设置</div>
+            <div class="field">
+                <label>YouTube代理 <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="detectProxy()">自动检测</button></label>
+                <input type="text" id="s-yt-proxy" placeholder="http://127.0.0.1:7890">
+                <div class="hint">yt-dlp下载YouTube视频时使用的代理，留空不使用</div>
             </div>
 
             <hr class="settings-divider">
@@ -602,6 +631,10 @@
                 }
                 if (msg.type === 'login_required') showLoginModal();
                 if (msg.type === 'login_success') hideLoginModal();
+                if (msg.type === 'login_status') {
+                    if (msg.status === 'in_progress') showLoginModal(true);
+                    else if (msg.status === 'done') hideLoginModal();
+                }
             };
             ws.onclose = () => setTimeout(connectWS, 3000);
             ws.onerror = () => {};
@@ -648,10 +681,19 @@
         }
 
         // ========== Login Modal ==========
-        function showLoginModal() {
+        let loginModalActive = false;
+        function showLoginModal(skipTrigger) {
+            if (loginModalActive) return; // 防止重复弹窗
+            loginModalActive = true;
             document.getElementById('login-modal').classList.add('show');
             document.getElementById('login-spinner').textContent = '等待扫码...';
-            fetch('/api/trigger-login', { method: 'POST' }).catch(() => {});
+            if (!skipTrigger) {
+                fetch('/api/trigger-login', { method: 'POST' }).catch(() => {});
+            }
+        }
+        function hideLoginModal() {
+            loginModalActive = false;
+            document.getElementById('login-modal').classList.remove('show');
         }
 
         let playlist = [];
@@ -745,7 +787,7 @@
         // ========== Stats ==========
         async function loadStats() {
             const stats = await fetchJSON('/api/stats');
-            document.getElementById('stat-total').textContent = stats.total_videos;
+            document.getElementById('stat-total').textContent = stats.total_downloads;
             document.getElementById('stat-pending').textContent = stats.pending;
             document.getElementById('stat-downloading').textContent = stats.downloading;
             document.getElementById('stat-completed').textContent = stats.completed;
@@ -941,7 +983,7 @@
                     <td><input type="checkbox" class="dl-check" value="${dl.id}" ${dl.status === 'downloading' ? 'disabled' : ''}></td>
                     <td class="cell-truncate" title="${escHtml(dl.platform_name || '')}">${dl.platform_url ? `<a href="${escAttr(dl.platform_url)}" target="_blank">${escHtml(dl.platform_name || '')}</a>` : escHtml(dl.platform_name || '')}</td>
                     <td class="cell-truncate" title="${escHtml(dl.creator_name || '')}">${avatar}${escHtml(dl.creator_name || '')}</td>
-                    <td class="title-cell">${dl.bvid ? `<a href="https://www.bilibili.com/video/${escHtml(dl.bvid)}" target="_blank" title="${escHtml(dl.title || '')}">${escHtml(dl.title || '')}</a>` : escHtml(dl.title || '')}</td>
+                    <td class="title-cell">${dl.bvid ? `<a href="${dl.platform_name === 'youtube' ? 'https://www.youtube.com/watch?v=' + escHtml(dl.bvid) : 'https://www.bilibili.com/video/' + escHtml(dl.bvid)}" target="_blank" title="${escHtml(dl.title || '')}">${escHtml(dl.title || '')}</a>` : escHtml(dl.title || '')}</td>
                     <td>${tagsHtml || '-'}</td>
                     <td>${dl.duration ? formatDuration(dl.duration) : '-'}</td>
                     <td>${escHtml(dl.resolution || '')}</td>
@@ -993,7 +1035,17 @@
                         body: JSON.stringify({ space_url: url }),
                     });
                     const result = await resp.json();
-                    if (result.ok) ok++; else { fail++; alert(`发布失败 [${url}]: ${result.error || ''}`); }
+                    if (result.ok) ok++;
+                    else {
+                        fail++;
+                        const msg = result.error || '';
+                        const isUnsupported = msg.includes('暂不支持') || msg.includes('无法识别');
+                        if (isUnsupported) {
+                            showTip(`该平台暂不支持: ${url}`);
+                        } else {
+                            alert(`发布失败 [${url}]: ${msg}`);
+                        }
+                    }
                 } catch (e) { fail++; alert(`请求失败 [${url}]: ${e.message}`); }
             }
             if (fail === 0) document.getElementById('task-url').value = '';
@@ -1139,6 +1191,8 @@
                 const result = await resp.json();
                 if (!result.ok) {
                     alert(result.error || '重试失败');
+                } else {
+                    await tryStartDownloads();
                 }
             } catch (e) { alert('请求失败: ' + e.message); }
         }
@@ -1149,8 +1203,20 @@
                 const result = await resp.json();
                 if (!result.ok) {
                     alert(result.error || '下载失败');
+                } else {
+                    await tryStartDownloads();
                 }
             } catch (e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function tryStartDownloads() {
+            try {
+                const resp = await fetch('/api/downloads/start', { method: 'POST' });
+                const result = await resp.json();
+                if (result.ok) {
+                    updateStartPauseButtons(true);
+                }
+            } catch (e) {}
         }
 
         function toggleDlSelectAll(checked) {
@@ -1178,6 +1244,21 @@
                 const result = await resp.json();
                 if (!result.ok) {
                     alert(result.error || '下载失败');
+                }
+            } catch (e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function retryFailedDownloads() {
+            try {
+                const resp = await fetch('/api/downloads/batch-retry-failed', { method: 'POST' });
+                const result = await resp.json();
+                if (!result.ok) {
+                    alert(result.error || '重试失败');
+                } else if (result.reset_count === 0) {
+                    alert('没有失败的视频需要重试');
+                } else {
+                    loadDownloads(downloadPage);
+                    loadStats();
                 }
             } catch (e) { alert('请求失败: ' + e.message); }
         }
@@ -1293,9 +1374,11 @@
             document.getElementById('s-template').value = settings.name_template || '';
             document.getElementById('s-output').value = settings.output_dir || '';
             document.getElementById('s-webport').value = settings.web_port;
+            document.getElementById('s-yt-proxy').value = settings.youtube_proxy || '';
             const currentTheme = document.body.getAttribute('data-theme') || 'light';
             document.querySelectorAll('.theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === currentTheme));
             await checkCookieStatus();
+            await checkYtCookieStatus();
         }
 
         function closeSettings() {}
@@ -1344,6 +1427,83 @@
             } catch(e) { alert('请求失败: ' + e.message); }
         }
 
+        // ========== YouTube Cookie ==========
+        async function checkYtCookieStatus() {
+            try {
+                const resp = await fetch('/api/cookie/youtube/status');
+                const r = await resp.json();
+                const el = document.getElementById('yt-cookie-status');
+                if (r.valid) {
+                    el.innerHTML = '<span style="color:#52c41a">&#10004;</span> Cookie 有效 (' + r.cookie_count + ' 条)';
+                } else if (r.exists) {
+                    el.innerHTML = '<span style="color:#f5222d">&#10008;</span> Cookie 无效';
+                } else {
+                    el.innerHTML = '<span style="color:#faad14">&#9888;</span> 未配置（可从 Chrome 导入或手动粘贴）';
+                }
+            } catch(e) {
+                document.getElementById('yt-cookie-status').textContent = '检测失败';
+            }
+        }
+
+        async function importYtCookie() {
+            const text = prompt('请粘贴 YouTube Cookie 内容（Netscape 格式）:\n\n获取方式：\n1. 安装浏览器扩展 "Get cookies.txt"\n2. 在 YouTube 页面点击扩展导出\n3. 将全部内容粘贴到下方');
+            if (text === null || !text.trim()) return;
+            try {
+                const resp = await fetch('/api/cookie/youtube/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie_text: text.trim() }),
+                });
+                const result = await resp.json();
+                if (result.ok) {
+                    await checkYtCookieStatus();
+                } else {
+                    alert('导入失败: ' + (result.error || '未知错误'));
+                }
+            } catch(e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function importYtCookieFromChrome() {
+            try {
+                const resp = await fetch('/api/cookie/youtube/import-chrome', { method: 'POST' });
+                const result = await resp.json();
+                if (result.ok) {
+                    showTip('已从 Chrome 导入 YouTube Cookie');
+                    await checkYtCookieStatus();
+                } else {
+                    alert('导入失败: ' + (result.error || '未知错误'));
+                }
+            } catch(e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function clearYtCookie() {
+            try {
+                await fetch('/api/cookie/youtube/clear', { method: 'POST' });
+                await checkYtCookieStatus();
+            } catch(e) { alert('请求失败: ' + e.message); }
+        }
+
+        function switchCookieTab(platform) {
+            document.querySelectorAll('.cookie-tab').forEach(t => t.classList.toggle('active', t.dataset.platform === platform));
+            document.querySelectorAll('.cookie-panel').forEach(p => {
+                if (p.id === 'cookie-panel-' + platform) p.removeAttribute('data-hidden');
+                else p.setAttribute('data-hidden', '');
+            });
+        }
+
+        async function detectProxy() {
+            try {
+                const resp = await fetch('/api/detect-proxy');
+                const r = await resp.json();
+                if (r.proxy) {
+                    document.getElementById('s-yt-proxy').value = r.proxy;
+                    alert('已检测到系统代理: ' + r.proxy + '\n请点击保存设置生效。');
+                } else {
+                    alert('未检测到系统代理设置。');
+                }
+            } catch(e) { alert('检测失败: ' + e.message); }
+        }
+
         async function saveSettingsFromUI() {
             const data = {
                 max_concurrent_downloads: parseInt(document.getElementById('s-concurrency').value) || 5,
@@ -1353,6 +1513,7 @@
                 name_template: document.getElementById('s-template').value,
                 output_dir: document.getElementById('s-output').value,
                 web_port: parseInt(document.getElementById('s-webport').value) || 8080,
+                youtube_proxy: document.getElementById('s-yt-proxy').value.trim(),
             };
             try {
                 const resp = await fetch('/api/settings', {
@@ -1363,6 +1524,7 @@
                 const result = await resp.json();
                 if (result.ok) {
                     closeSettings();
+                    showTip('设置已保存');
                 } else {
                     alert('保存失败: ' + (result.error || '未知错误'));
                 }

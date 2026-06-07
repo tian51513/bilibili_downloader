@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 
 from bilibili_downloader.platforms.base import BasePlatform
 
@@ -176,14 +177,31 @@ class YouTubePlatform(BasePlatform):
             'noprogress': True,
         }
 
+        # JS 运行时（YouTube 签名解析需要）
+        for candidate in [
+            shutil.which("node") or "node",
+            r"D:\program\nodejs\node.exe",
+            os.path.join(os.environ.get("PROGRAMFILES", ""), "nodejs", "node.exe"),
+        ]:
+            if os.path.isfile(candidate) or shutil.which(candidate):
+                ydl_opts['js_runtimes'] = {'node': {'path': candidate if os.path.isfile(candidate) else shutil.which(candidate)}}
+                ydl_opts['remote_components'] = {'ejs:github'}
+                break
+
         # 限速
         if speed_limit_bps > 0:
             ydl_opts['ratelimit'] = speed_limit_bps
 
-        # Cookie（如果有的话）
+        # 代理
+        proxy = kwargs.get("proxy", "")
+        if proxy:
+            ydl_opts['proxy'] = proxy
+
+        # Cookie 优先级：手动传入 > YouTube cookie 文件 > Chrome 浏览器 > 无 cookie
         cookies = kwargs.get("cookies")
+        cookie_used = False
         if cookies:
-            import tempfile
+            # 手动传入的 cookie（Bilibili 格式 list[dict]）
             cookie_file = os.path.join(save_dir, ".yt-dlp-cookies.txt")
             try:
                 with open(cookie_file, "w", encoding="utf-8") as f:
@@ -191,13 +209,45 @@ class YouTubePlatform(BasePlatform):
                         domain = c.get("domain", ".youtube.com")
                         f.write(f"{domain}\tTRUE\t/\tTRUE\t{c.get('expires', '0')}\t{c.get('name', '')}\t{c.get('value', '')}\n")
                 ydl_opts['cookiefile'] = cookie_file
+                cookie_used = True
+                logger.info("[YouTubePlatform] 使用手动传入 cookie")
             except Exception as e:
                 logger.debug(f"[YouTubePlatform] Cookie 文件写入失败: {e}")
 
+        if not cookie_used:
+            # 检查 YouTube cookie 文件
+            cookie_file_path = kwargs.get("cookie_file", "")
+            if cookie_file_path and os.path.exists(cookie_file_path):
+                ydl_opts['cookiefile'] = cookie_file_path
+                cookie_used = True
+                logger.info(f"[YouTubePlatform] 使用 cookie 文件: {cookie_file_path}")
+
+        if not cookie_used:
+            logger.info("[YouTubePlatform] 未配置 cookie，以未登录状态下载")
+
         try:
             # yt-dlp 下载是同步的，放到线程池中执行
+            actual_resolution = "best"
+
             def _download():
+                nonlocal actual_resolution
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    # 先提取格式信息获取实际分辨率
+                    try:
+                        info = ydl.extract_info(video_url, download=False)
+                        if info:
+                            height = info.get("height") or info.get("resolution")
+                            if height:
+                                actual_resolution = f"{height}p"
+                            fmt = info.get("format", "")
+                            # 从 format 字符串提取分辨率
+                            if not height and fmt:
+                                import re as _re
+                                m = _re.search(r"(\d{3,4})x(\d{3,4})", fmt)
+                                if m:
+                                    actual_resolution = f"{m.group(2)}p"
+                    except Exception as e:
+                        logger.debug(f"[YouTubePlatform] 获取分辨率信息失败: {e}")
                     ydl.download([video_url])
 
             loop = asyncio.get_event_loop()
@@ -238,7 +288,7 @@ class YouTubePlatform(BasePlatform):
                     "UPDATE download SET save_path=? WHERE id=?", (save_path, download_id)
                 )
 
-            await db.update_download_progress(download_id, final_size, "best")
+            await db.update_download_progress(download_id, final_size, actual_resolution)
             await db.update_download_status(download_id, "completed")
             if ws_manager:
                 await ws_manager.broadcast({
