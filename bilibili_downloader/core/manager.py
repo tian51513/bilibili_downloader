@@ -12,7 +12,10 @@ class DownloadManager:
     def __init__(self, db, api, save_dir: str, resolution_priority: list[str] | None = None,
                  max_concurrent_downloads: int = MAX_CONCURRENT_DOWNLOADS,
                  max_concurrent_api: int = MAX_CONCURRENT_API_REQUESTS,
-                 name_template: str = DEFAULT_NAME_TEMPLATE):
+                 name_template: str = DEFAULT_NAME_TEMPLATE,
+                 speed_limit_bps: int = 0,
+                 ws_manager=None,
+                 cancel_event=None):
         self.db = db
         self.api = api
         self.save_dir = save_dir
@@ -20,6 +23,9 @@ class DownloadManager:
         self.max_concurrent_downloads = max_concurrent_downloads
         self.max_concurrent_api = max_concurrent_api
         self.name_template = name_template
+        self.speed_limit_bps = speed_limit_bps
+        self.ws_manager = ws_manager
+        self.cancel_event = cancel_event
         self.api_semaphore = asyncio.Semaphore(max_concurrent_api)
         self.download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
 
@@ -49,14 +55,23 @@ class DownloadManager:
                     resolution=self.resolution_priority[0],
                 )
 
-        # Process all pending downloads
-        pending = await self.db.get_all_downloads(status="pending")
-        if not pending:
+        # Process all pending downloads (fetch all pages, not just first page)
+        all_pending: list[dict] = []
+        page = 1
+        while True:
+            pending = await self.db.get_all_downloads(status="pending", page=page, page_size=200)
+            items = pending["items"] if isinstance(pending, dict) else pending
+            all_pending.extend(items)
+            if len(all_pending) >= pending.get("total", 0) or not items:
+                break
+            page += 1
+        pending_items = all_pending
+        if not pending_items:
             logger.info("No pending downloads")
             return
 
         tasks = []
-        for dl in pending:
+        for dl in pending_items:
             video = await self.db.get_video(dl["video_id"])
             if not video:
                 logger.warning(f"download id={dl['id']} 关联的 video_id={dl['video_id']} 不存在，跳过")
@@ -82,7 +97,14 @@ class DownloadManager:
                 name_template=self.name_template,
                 api_semaphore=self.api_semaphore,
                 download_semaphore=self.download_semaphore,
+                speed_limit_bps=self.speed_limit_bps,
+                ws_manager=self.ws_manager,
+                cancel_event=self.cancel_event,
             ))
+
+            if self.cancel_event and self.cancel_event.is_set():
+                logger.info("Download cancelled, stopping")
+                break
 
         await asyncio.gather(*tasks, return_exceptions=True)
 

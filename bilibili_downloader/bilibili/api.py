@@ -49,7 +49,7 @@ class BilibiliAPI:
     async def get_video_info(self, bvid: str) -> dict:
         """获取视频详情（cid + tags）。
 
-        /x/web-interface/view 接口返回视频信息包含标签。
+        cid 来自 /x/web-interface/view，tags 来自 /x/tag/archive/tags（无需WBI签名）。
         Returns: {"cid": int, "tags": list[str]}
         """
         url = f"{BILIBILI_API_BASE}/x/web-interface/view?bvid={bvid}"
@@ -63,7 +63,18 @@ class BilibiliAPI:
         video_data = data.get("data", {})
         pages = video_data.get("pages", [])
         cid = pages[0]["cid"] if pages else None
-        tags = [t["tag_name"] for t in video_data.get("tag", [])] if video_data.get("tag") else []
+
+        # Fetch tags from dedicated tag endpoint (more reliable than view API)
+        tags = []
+        try:
+            tag_url = f"{BILIBILI_API_BASE}/x/tag/archive/tags?bvid={bvid}"
+            async with self.session.get(tag_url, headers=self.headers, timeout=REQUEST_TIMEOUT) as resp:
+                tag_data = await resp.json()
+            if tag_data.get("code") == 0 and tag_data.get("data"):
+                tags = [t["tag_name"] for t in tag_data["data"]]
+        except Exception as e:
+            logger.debug(f"[api] get_video_info bvid={bvid} tag fetch failed: {e}")
+
         logger.debug(f"[api] get_video_info bvid={bvid} cid={cid} tags={tags}")
         return {"cid": cid, "tags": tags}
 
@@ -83,3 +94,80 @@ class BilibiliAPI:
             logger.debug(f"[api] get_stream_urls bvid={bvid} error response: code={code} message={data.get('message')} data={data}")
             raise ValueError(f"API error: code={code}, message={data.get('message')}")
         return parse_stream_urls(data, priority)
+
+    async def validate_cookie(self) -> bool:
+        """检查当前cookie/session是否仍然有效。"""
+        url = f"{BILIBILI_API_BASE}/x/web-interface/nav"
+        try:
+            async with self.session.get(url, headers=self.headers, timeout=REQUEST_TIMEOUT) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json()
+                return data.get("code") == 0 and data.get("data", {}).get("isLogin", False)
+        except Exception:
+            return False
+
+    async def get_user_card(self, mid: str) -> dict | None:
+        """Get user card info (name, face, etc.) by mid."""
+        url = f"{BILIBILI_API_BASE}/x/web-interface/card"
+        try:
+            async with self.session.get(url, params={"mid": mid}, headers=self.headers, timeout=REQUEST_TIMEOUT) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                if data.get("code") == 0:
+                    return data.get("data")
+        except Exception:
+            pass
+        return None
+
+    async def fetch_videos_by_api(
+        self, mid: str, existing_bvids: set[str] | None = None,
+    ) -> list[dict]:
+        """Fetch all videos for a UP主 via arc/search API with WBI signature.
+
+        Used to backfill videos that scrolling didn't collect.
+        """
+        from bilibili_downloader.bilibili.parser import parse_video_list
+        from bilibili_downloader.bilibili.wbi import WbiSigner
+
+        existing_bvids = existing_bvids or set()
+        all_videos: list[dict] = []
+        seen_bvids = set(existing_bvids)
+        page = 1
+        total = None
+
+        signer = await WbiSigner.create(self.session)
+
+        while True:
+            params = signer.sign({
+                "mid": mid,
+                "ps": 30,
+                "pn": page,
+                "order": "pubdate",
+            })
+            url = f"{BILIBILI_API_BASE}/x/space/wbi/arc/search?{urlencode(params)}"
+            async with self.session.get(url, headers=self.headers, timeout=REQUEST_TIMEOUT) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+
+            if data.get("code") != 0:
+                logger.warning(f"[api] arc/search backfill page {page} error: {data.get('message')}")
+                break
+
+            page_data = data["data"]
+            total = page_data.get("page", {}).get("count", 0)
+            new_videos = []
+            for v in parse_video_list(data):
+                if v["remote_id"] not in seen_bvids:
+                    new_videos.append(v)
+                    seen_bvids.add(v["remote_id"])
+
+            all_videos.extend(new_videos)
+            logger.info(f"[api] backfill page {page}: {len(new_videos)} new, seen {len(seen_bvids)}/{total}")
+
+            if len(seen_bvids) >= total:
+                break
+            page += 1
+
+        return all_videos

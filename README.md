@@ -1,21 +1,34 @@
 # Bilibili Downloader
 
-B站UP主视频批量下载器。Playwright 浏览器采集数据（绕过反爬），aiohttp 异步高并发下载视频流。自动扫码登录，Web 仪表盘实时监控。
+B站UP主视频批量下载器。Playwright 浏览器采集数据（绕过反爬），aiohttp 异步高并发下载视频流。自动扫码登录，Web 仪表盘实时监控。支持双流下载、断点续传、限速下载、视频播放等V2功能。
 
 ## 功能特性
 
-- 批量下载多个UP主的全部视频
-- Playwright 浏览器采集，绕过B站反爬检测（-352/-799/412）
-- **自动扫码登录**：无cookie时弹出浏览器，手机B站APP扫码，登录后自动缓存
-- **Cookie 4级优先级**：CLI参数 > 环境变量 > 缓存文件 > 扫码登录
-- 视频标签提取（可爱/纯欲/萌妹等），Web端多选标签筛选
-- 合集分类自动提取，文件名体现合集归属
-- 文件名含 bvid 防止同名视频覆盖
-- 异步高并发下载（可调并发数）
+### 下载引擎
+- 双流下载（视频+音频）+ ffmpeg合并
+- 断点续传（Range请求，网络中断后自动恢复）
+- 下载限速（可设置MB/s，最低100KB/s）
+- 异步高并发下载（API/下载信号量分别控制）
 - 分辨率优先级自动选择
-- SQLite状态持久化，跳过已下载视频，--force 可重置
-- Web仪表盘（统计/筛选/标签/进度条/设置面板）
-- `start.bat` 一键启动
+- 指数退避重试 + 永久错误自动识别
+
+### 数据采集
+- Playwright 浏览器采集，绕过B站反爬检测（-352/-799/412）
+- API补全（WBI签名arc/search主动分页，解决滚动加载不全问题）
+- 自动扫码登录，Cookie 4级优先级（CLI > 环境变量 > 缓存 > 扫码）
+- 视频标签提取，合集分类自动提取
+- 文件名含 bvid 防止同名覆盖
+
+### Web仪表盘
+- 任务管理面板（多行提交/进度/重试/暂停/强制重抓/编辑URL/删除）
+- 下载管理（单个/批量下载，复选框全选，状态实时刷新）
+- 视频播放器（自动播放 + 动态播放列表 + 上/下一个 + 自动连播）
+- 标签筛选（OR关系，搜索/全选/反选/清除）
+- WebSocket实时推送（精确状态驱动，无轮询）
+- 统一UI系统（日间/夜间双主题）
+- 分页显示、目录选择器、设置持久化
+- 下载列表排序（标题/时长/分辨率/大小）
+- 存储检测（扫描路径有效性，自动修复）
 
 ## 快速开始
 
@@ -52,6 +65,15 @@ pip install -e .
 playwright install chromium
 ```
 
+### 依赖说明
+
+- **基础依赖**：通过 `pip install -e .` 自动安装
+- **Playwright**：需要手动安装 Chromium 浏览器
+- **ffmpeg**：用于合并视频流和音频流
+  - Windows: 从 [ffmpeg官网](https://ffmpeg.org/download.html) 下载并添加到PATH
+  - Linux: `sudo apt install ffmpeg`
+  - Mac: `brew install ffmpeg`
+
 ## Cookie机制
 
 ```
@@ -86,22 +108,44 @@ bilibili-dl https://space.bilibili.com/33676449 --no-cache                   # �
 bilibili-dl web                # 默认 http://localhost:8080
 bilibili-dl web --port 9090  # 自定义端口
 start.bat                   # Windows 一键启动（自动激活venv+打开浏览器）
+restart.bat                 # Windows 一键重启（自动关闭旧进程+启动新服务）
 ```
 
-功能：状态Tab切换、UP主/合集/标签筛选、下载进度条、项目设置。
+功能：任务管理、下载管理、视频播放、状态筛选、项目设置。
 
-### REST API
+## REST API
 
 | 路由 | 方法 | 说明 |
 |------|------|------|
 | `/` | GET | 仪表盘页面 |
+| `/ws` | WS | WebSocket实时推送 |
 | `/api/stats` | GET | 统计数据 |
-| `/api/downloads` | GET | 下载列表（`?status=&creator_id=&section_name=&tags=`） |
-| `/api/downloads/{id}` | GET | 单个下载详情 |
+| `/api/downloads` | GET | 下载列表（分页+筛选） |
+| `/api/downloads/start` | POST | 开始下载 |
+| `/api/downloads/pause` | POST | 暂停下载 |
+| `/api/downloads/batch-start` | POST | 批量下载选中 |
+| `/api/downloads/{id}` | GET | 下载详情 |
+| `/api/downloads/{id}/play` | GET | 视频文件播放 |
+| `/api/downloads/{id}/retry` | POST | 重试单个 |
+| `/api/downloads/{id}/delete` | DELETE | 删除记录 |
+| `/api/tasks` | GET | 任务列表 |
+| `/api/tasks/submit` | POST | 提交任务 |
+| `/api/tasks/{id}/retry` | POST | 重试任务 |
+| `/api/tasks/{id}/force` | POST | 强制重抓 |
+| `/api/tasks/{id}/pause` | POST | 暂停任务 |
+| `/api/tasks/{id}/resume` | POST | 恢复任务 |
+| `/api/tasks/{id}/reset-downloads` | POST | 重置下载 |
+| `/api/tasks/{id}/url` | POST | 修改URL |
+| `/api/tasks/{id}/delete` | POST | 删除任务 |
 | `/api/creators` | GET | UP主列表 |
-| `/api/sections` | GET | 合集列表 |
 | `/api/tags` | GET | 标签列表 |
 | `/api/settings` | GET/POST | 获取/保存设置 |
+| `/api/cookie/status` | GET | Cookie状态 |
+| `/api/cookie/clear` | POST | 清除Cookie |
+| `/api/trigger-login` | POST | 触发扫码登录 |
+| `/api/storage-check` | POST | 存储检测（扫描路径有效性） |
+| `/api/pick-directory` | POST | 原生目录选择器 |
+| `/api/directories` | POST | 列出子目录 |
 
 ## 命令行参数
 
@@ -139,31 +183,39 @@ bilibili_downloader/
 ├── main.py            # 程序入口
 ├── browser.py         # Playwright浏览器 + Cookie缓存
 ├── storage/           # 存储层
-│   ├── database.py    # SQLite异步CRUD
+│   ├── database.py    # SQLite异步CRUD（五表 + 分页 + 任务状态同步）
 │   └── files.py       # 文件命名与路径解析
 ├── bilibili/          # B站交互层
-│   ├── api.py         # 流URL获取 + 视频详情(含标签)
+│   ├── api.py         # 流URL获取 + 视频详情 + API补全 + Cookie验证
 │   ├── parser.py      # 响应解析
-│   └── scraper.py     # Playwright数据采集
+│   ├── scraper.py     # Playwright数据采集
+│   └── wbi.py         # WBI签名鉴权
 ├── core/              # 下载引擎
-│   ├── manager.py     # 任务调度
-│   ├── worker.py      # 单视频下载
+│   ├── manager.py     # 任务调度 + 取消事件
+│   ├── worker.py      # 单视频下载（双流+合并+续传+限速+WS广播）
 │   └── retry.py       # 重试策略
 ├── cli/               # 命令行
 │   └── main.py        # argparse + Cookie + QR登录
 └── web/               # Web仪表盘
-    ├── app.py          # FastAPI应用
-    ├── routes.py       # REST API
-    └── templates/      # Jinja2模板
+    ├── app.py          # FastAPI应用 + WebSocket
+    ├── routes.py       # REST API（30+端点 + 存储检测）
+    ├── task_service.py # 后台任务服务（采集队列+API补全+下载调度）
+    ├── ws_manager.py   # WebSocket连接管理
+    └── templates/
+        └── index.html   # 仪表盘（任务+下载+播放+设置）
 start.bat              # Windows一键启动
+restart.bat            # Windows一键重启
+restart.py             # 重启脚本（端口检测+进程管理）
 ```
 
 ## 技术架构
 
 两阶段分离：
 
-1. **数据采集**（Playwright）：Chromium → 注入Cookie → 导航空间页 → on_response读取API响应 → 滚动加载全部分页 → 解析去重 → 关闭浏览器
-2. **视频下载**（aiohttp）：获取流URL → 信号量并发控制 → CDN流式下载 → SQLite状态更新
+1. **数据采集**（Playwright）：Chromium → 注入Cookie → 导航空间页 → on_response读取API → 滚动加载 → API补全遗漏 → 解析去重 → 关闭浏览器
+2. **视频下载**（aiohttp）：获取流URL → 双流下载 → ffmpeg合并 → SQLite状态更新 → WebSocket广播
+
+任务状态机：`init → scraping → pending → downloading → completed/paused/failed`
 
 ## 许可证
 
