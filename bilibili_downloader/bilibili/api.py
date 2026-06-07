@@ -96,26 +96,14 @@ class BilibiliAPI:
         return parse_stream_urls(data, priority)
 
     async def validate_cookie(self) -> bool:
-        """检查当前cookie/session是否仍然有效。
-
-        nav API 的 isLogin 即使对失效 cookie 也可能返回 true，
-        因此额外检查用户信息（mid > 0）作为二次验证。
-        """
+        """检查当前cookie/session是否仍然有效。"""
         url = f"{BILIBILI_API_BASE}/x/web-interface/nav"
         try:
             async with self.session.get(url, headers=self.headers, timeout=REQUEST_TIMEOUT) as resp:
                 if resp.status != 200:
                     return False
                 data = await resp.json()
-                if data.get("code") != 0:
-                    return False
-                nav_data = data.get("data", {})
-                if not nav_data.get("isLogin", False):
-                    return False
-                # 二次验证：检查是否有用户信息（失效 cookie 无 mid）
-                if not nav_data.get("mid"):
-                    return False
-                return True
+                return data.get("code") == 0 and data.get("data", {}).get("isLogin", False)
         except Exception:
             return False
 

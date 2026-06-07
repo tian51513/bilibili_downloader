@@ -67,11 +67,6 @@ class PlaywrightBrowser:
         await browser.close()
     """
 
-    # 反 headless 检测的默认 Chromium 启动参数
-    _ANTI_DETECT_ARGS = [
-        "--disable-blink-features=AutomationControlled",
-    ]
-
     def __init__(self, headless: bool = True, cookies: list[dict] | None = None):
         self._playwright = None
         self._browser = None
@@ -85,10 +80,7 @@ class PlaywrightBrowser:
         from playwright.async_api import async_playwright
 
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=self._headless,
-            args=self._ANTI_DETECT_ARGS,
-        )
+        self._browser = await self._playwright.chromium.launch(headless=self._headless)
         self._context = await self._browser.new_context(
             user_agent=USER_AGENT,
             viewport={"width": 1920, "height": 1080},
