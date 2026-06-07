@@ -39,9 +39,10 @@ class BilibiliPlatform(BasePlatform):
         browser = kwargs.get("browser")
         session = kwargs.get("session")
         cookies = kwargs.get("cookies")
+        on_progress = kwargs.get("on_progress")
 
         scraper = BilibiliScraper(browser)
-        data = await scraper.collect(creator_id)
+        data = await scraper.collect(creator_id, on_progress=on_progress)
 
         # API 补全
         if session and cookies:

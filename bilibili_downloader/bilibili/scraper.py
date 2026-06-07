@@ -37,8 +37,12 @@ class BilibiliScraper:
         """清理采集缓存，释放内存。"""
         self._collected.clear()
 
-    async def collect(self, mid: str) -> dict:
+    async def collect(self, mid: str, on_progress=None) -> dict:
         """采集一个UP主的全部数据（空间信息 + 视频列表 + 合集）。
+
+        Args:
+            mid: UP主 mid
+            on_progress: 可选回调，签名 on_progress(scraped, total)，每次发现新视频时调用
 
         Returns:
             {'space_info': dict | None, 'videos': list[dict], 'sections': list[dict]}
@@ -133,6 +137,8 @@ class BilibiliScraper:
 
             loaded = _deduped_count()
             logger.info(f"初始加载: 去重后 {loaded}/{total}, 拦截到 {len(video_responses)} 个arc/search响应")
+            if on_progress:
+                on_progress(loaded, total)
 
             if total > 0 and loaded < total:
                 logger.info(f"滚动加载视频: 去重后 {loaded}/{total}")
@@ -152,6 +158,8 @@ class BilibiliScraper:
                     else:
                         stale_count = 0
                         logger.info(f"滚动加载视频: 去重后 {loaded}/{total}, 响应数={len(video_responses)}")
+                        if on_progress:
+                            on_progress(loaded, total)
                     last_loaded = loaded
                     if loaded >= total:
                         break

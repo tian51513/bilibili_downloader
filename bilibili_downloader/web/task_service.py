@@ -224,10 +224,30 @@ class TaskService:
             session = aiohttp.ClientSession()
 
         try:
+            def _on_scrape_progress(scraped: int, total: int):
+                """采集进度回调：更新数据库 + 广播 WebSocket。"""
+                async def _notify():
+                    await self.db.update_task_status(
+                        task_id, "scraping",
+                        total_videos=total, scraped_videos=scraped,
+                    )
+                    await self._broadcast({
+                        "type": "scrape_progress",
+                        "task_id": task_id,
+                        "data": {"scraped": scraped, "total": total, "phase": "scraping"},
+                    })
+                # 在当前事件循环中调度异步广播
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(_notify())
+                except RuntimeError:
+                    pass
+
             scrape_kwargs = {
                 "cookies": cookies,
                 "browser": browser,
                 "session": session,
+                "on_progress": _on_scrape_progress,
             }
 
             try:
