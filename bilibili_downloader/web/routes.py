@@ -5,6 +5,7 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 
 from bilibili_downloader.config import SETTINGS_PATH, load_settings, save_settings
+from bilibili_downloader.web.ws_manager import get_ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ def create_routes(db, env, task_service=None):
     async def api_clear_downloads(request: Request) -> JSONResponse:
         try:
             await db.clear_all_downloads()
+            ws = get_ws_manager()
+            await ws.broadcast({"type": "task_status", "task_id": 0, "data": {"status": "refresh"}})
+            await ws.broadcast({"type": "download_progress", "status": "refresh"})
             return JSONResponse({"ok": True})
         except Exception as e:
             logger.error(f"清空下载记录失败: {e}")
@@ -97,7 +101,6 @@ def create_routes(db, env, task_service=None):
     async def api_pick_directory(request: Request) -> JSONResponse:
         """Open native directory picker dialog via subprocess (avoids tkinter main-thread issue)."""
         import asyncio
-        import locale
         import sys
         data = await request.json()
         initial_dir = data.get("current_path", "./downloads")
@@ -109,18 +112,28 @@ def create_routes(db, env, task_service=None):
             "root.destroy(); print(r)"
         )
 
-        sys_encoding = locale.getpreferredencoding(False)
+        # 子进程输出编码：Windows 控制台使用 cp936(GBK)，
+        # 但 locale.getpreferredencoding() 不可靠（可能返回 cp1252）。
+        # 方案：子进程内用 UTF-8 写 stdout，父进程用 UTF-8 读。
+        script_utf8 = (
+            "import sys, io; sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8'); "
+            "import tkinter as tk; from tkinter import filedialog; "
+            "root = tk.Tk(); root.withdraw(); "
+            f"r = filedialog.askdirectory(initialdir={initial_dir!r}, title='选择保存目录'); "
+            "root.destroy(); print(r); sys.stdout.flush()"
+        )
         try:
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-c", script,
+                sys.executable, "-c", script_utf8,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             if proc.returncode != 0:
-                logger.error(f"Directory picker process error: {stderr.decode(sys_encoding, errors='replace')}")
-                return JSONResponse({"ok": False, "error": stderr.decode(sys_encoding, errors='replace')[:200]}, status_code=500)
-            selected = stdout.decode(sys_encoding).strip()
+                stderr_text = stderr.decode("utf-8", errors="replace")
+                logger.error(f"Directory picker process error: {stderr_text}")
+                return JSONResponse({"ok": False, "error": stderr_text[:200]}, status_code=500)
+            selected = stdout.decode("utf-8").strip()
         except asyncio.TimeoutError:
             proc.kill()
             return JSONResponse({"ok": False, "error": "timeout"}, status_code=500)
@@ -214,6 +227,8 @@ def create_routes(db, env, task_service=None):
             return JSONResponse({"ok": False, "error": "Only pending/scraping/downloading tasks can be paused"}, status_code=400)
         task_service.pause_task(task_id)
         await db.update_task_status(task_id, "paused")
+        ws = get_ws_manager()
+        await ws.broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "paused"}})
         return JSONResponse({"ok": True})
 
     async def api_task_resume(request: Request) -> JSONResponse:
@@ -232,7 +247,7 @@ def create_routes(db, env, task_service=None):
         return JSONResponse({"ok": True})
 
     async def api_task_reset_downloads(request: Request) -> JSONResponse:
-        """Reset all downloads for a task's creator to pending (re-download without re-scrape)."""
+        """Reset failed/skipped downloads to pending, backfill missed videos via API, sync status."""
         if not task_service:
             return JSONResponse({"ok": False, "error": "TaskService not available"}, status_code=503)
         task_id = int(request.path_params["task_id"])
@@ -241,11 +256,11 @@ def create_routes(db, env, task_service=None):
             return JSONResponse({"error": "not found"}, status_code=404)
         if not task.get("creator_id"):
             return JSONResponse({"ok": False, "error": "Task has no creator, cannot reset downloads"}, status_code=400)
-        await db.reset_task_downloads(task["creator_id"])
-        await db.update_task_status(task_id, "pending", error_message=None, cookie_status="valid",
-                                     downloaded_videos=0, total_downloads=0)
-        await task_service.submit_task(task["space_url"])
-        return JSONResponse({"ok": True})
+        reset_result = await task_service.reset_and_backfill(task_id)
+        ws = get_ws_manager()
+        await ws.broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "refresh"}})
+        await ws.broadcast({"type": "download_progress", "status": "refresh"})
+        return JSONResponse({"ok": True, **reset_result})
 
     async def api_task_update_url(request: Request) -> JSONResponse:
         """Update a task's space URL."""
@@ -262,6 +277,8 @@ def create_routes(db, env, task_service=None):
         if not match:
             return JSONResponse({"ok": False, "error": "Invalid Bilibili space URL"}, status_code=400)
         await db.update_task_url(task_id, space_url, match.group(1))
+        ws = get_ws_manager()
+        await ws.broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "refresh"}})
         return JSONResponse({"ok": True})
 
     async def api_task_delete(request: Request) -> JSONResponse:
@@ -271,6 +288,9 @@ def create_routes(db, env, task_service=None):
         if not task:
             return JSONResponse({"error": "not found"}, status_code=404)
         await db.delete_task(task_id)
+        ws = get_ws_manager()
+        await ws.broadcast({"type": "task_status", "task_id": task_id, "data": {"status": "deleted"}})
+        await ws.broadcast({"type": "download_progress", "status": "refresh"})
         return JSONResponse({"ok": True})
 
     async def api_download_start(request: Request) -> JSONResponse:
@@ -302,6 +322,9 @@ def create_routes(db, env, task_service=None):
         if dl["status"] == "downloading":
             return JSONResponse({"ok": False, "error": "正在下载中，请先暂停"}, status_code=400)
         await db.update_download_status(download_id, "pending", error_msg=None)
+        ws = get_ws_manager()
+        await ws.broadcast({"type": "task_status", "task_id": 0, "data": {"status": "refresh"}})
+        await ws.broadcast({"type": "download_progress", "status": "refresh"})
         return JSONResponse({"ok": True})
 
     async def api_download_batch_start(request: Request) -> JSONResponse:
@@ -318,6 +341,11 @@ def create_routes(db, env, task_service=None):
             if dl and dl["status"] != "downloading":
                 await db.update_download_status(int(did), "pending", error_msg=None)
                 reset_count += 1
+        # 广播重置状态变更（start_downloads 内部会广播 started）
+        if reset_count > 0:
+            ws = get_ws_manager()
+            await ws.broadcast({"type": "task_status", "task_id": 0, "data": {"status": "refresh"}})
+            await ws.broadcast({"type": "download_progress", "status": "refresh"})
         # Auto-start if not running
         started = False
         if reset_count > 0 and not task_service.is_downloading():
@@ -332,6 +360,9 @@ def create_routes(db, env, task_service=None):
         if not dl:
             return JSONResponse({"error": "not found"}, status_code=404)
         await db.delete_download(download_id)
+        ws = get_ws_manager()
+        await ws.broadcast({"type": "task_status", "task_id": 0, "data": {"status": "refresh"}})
+        await ws.broadcast({"type": "download_progress", "status": "refresh"})
         return JSONResponse({"ok": True})
 
     async def api_download_status(request: Request) -> JSONResponse:
@@ -353,6 +384,9 @@ def create_routes(db, env, task_service=None):
                     await db.sync_task_status_from_downloads(t["id"])
             except Exception:
                 pass
+        ws = get_ws_manager()
+        await ws.broadcast({"type": "task_status", "task_id": 0, "data": {"status": "refresh"}})
+        await ws.broadcast({"type": "download_progress", "status": "refresh"})
         return JSONResponse({"ok": True, **result})
 
     async def api_video_file(request: Request) -> FileResponse:
@@ -414,10 +448,14 @@ def create_routes(db, env, task_service=None):
         """Trigger QR login in a headed browser."""
         if not task_service:
             return JSONResponse({"ok": False, "error": "TaskService not available"}, status_code=503)
-        success = await task_service.trigger_qr_login()
+        try:
+            success, error_msg = await task_service.trigger_qr_login()
+        except Exception as e:
+            logger.error(f"trigger_login endpoint error: {e}")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
         if success:
             return JSONResponse({"ok": True, "message": "QR login completed"})
-        return JSONResponse({"ok": False, "error": "QR login failed or timed out"}, status_code=500)
+        return JSONResponse({"ok": False, "error": error_msg or "QR login failed or timed out"}, status_code=500)
 
     return {
         "/": (index, ["GET"]),

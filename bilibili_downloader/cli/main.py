@@ -278,7 +278,8 @@ async def download_command(args):
 
 async def web_command(args):
     import uvicorn
-    from bilibili_downloader.web.app import create_app, get_ws_manager
+    from bilibili_downloader.web.app import create_app
+    from bilibili_downloader.web.ws_manager import get_ws_manager
     from bilibili_downloader.web.task_service import TaskService
     db = Database(DEFAULT_DB_PATH)
     await db.init()

@@ -67,6 +67,11 @@ class PlaywrightBrowser:
         await browser.close()
     """
 
+    # 反 headless 检测的默认 Chromium 启动参数
+    _ANTI_DETECT_ARGS = [
+        "--disable-blink-features=AutomationControlled",
+    ]
+
     def __init__(self, headless: bool = True, cookies: list[dict] | None = None):
         self._playwright = None
         self._browser = None
@@ -80,7 +85,10 @@ class PlaywrightBrowser:
         from playwright.async_api import async_playwright
 
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=self._headless)
+        self._browser = await self._playwright.chromium.launch(
+            headless=self._headless,
+            args=self._ANTI_DETECT_ARGS,
+        )
         self._context = await self._browser.new_context(
             user_agent=USER_AGENT,
             viewport={"width": 1920, "height": 1080},
@@ -115,17 +123,71 @@ class PlaywrightBrowser:
         return await self._context.cookies()
 
     async def close(self):
-        """关闭浏览器并释放所有资源。"""
-        if self._page:
-            await self._page.close()
-            self._page = None
-        if self._context:
-            await self._context.close()
-            self._context = None
-        if self._browser:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright:
-            await self._playwright.stop()
-            self._playwright = None
-        logger.info("浏览器已关闭")
+        """关闭浏览器并释放所有资源，每个资源独立清理防止级联失败。"""
+        errors = []
+        for label, attr, close_fn in [
+            ("page", "_page", lambda o: o.close()),
+            ("context", "_context", lambda o: o.close()),
+            ("browser", "_browser", lambda o: o.close()),
+            ("playwright", "_playwright", lambda o: o.stop()),
+        ]:
+            obj = getattr(self, attr, None)
+            if obj is None:
+                continue
+            try:
+                await close_fn(obj)
+            except Exception as e:
+                errors.append(f"{label}: {e}")
+            finally:
+                setattr(self, attr, None)
+        if errors:
+            logger.warning(f"浏览器关闭部分失败: {'; '.join(errors)}")
+        else:
+            logger.info("浏览器已关闭")
+        # 保底：杀死所有残留的子进程
+        self._kill_orphan_processes()
+
+    def _kill_orphan_processes(self):
+        """杀死当前进程的所有 Playwright 子进程（node.exe/chrome.exe）。"""
+        import subprocess
+        import os
+        my_pid = os.getpid()
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {my_pid}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5,
+            )
+            # 没有子进程时跳过
+            if not result.stdout.strip():
+                return
+        except Exception:
+            return
+        # 用 wmic 查找当前进程的子进程树
+        for proc_name in ("node.exe", "chrome.exe", "chromium.exe"):
+            try:
+                result = subprocess.run(
+                    ["wmic", "process", "where", f"(Name='{proc_name}')",
+                     "get", "ProcessId,ParentProcessId", "/FORMAT:CSV", "/NH"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in result.stdout.strip().splitlines():
+                    line = line.strip().strip('"')
+                    parts = [p.strip().strip('"') for p in line.split(",")]
+                    if len(parts) < 2:
+                        continue
+                    try:
+                        ppid = int(parts[0])
+                        pid = int(parts[1])
+                    except ValueError:
+                        continue
+                    if ppid == my_pid:
+                        try:
+                            subprocess.run(
+                                ["taskkill", "/F", "/PID", str(pid)],
+                                capture_output=True, timeout=5,
+                            )
+                            logger.debug(f"杀死孤儿进程: {proc_name} PID={pid}")
+                        except Exception:
+                            pass
+            except Exception:
+                pass

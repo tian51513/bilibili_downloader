@@ -7,7 +7,7 @@ B站UP主视频批量下载器。两阶段架构：Phase 1 用 Playwright 浏览
 ## 技术栈
 
 - **语言**: Python 3.11+（开发环境 3.12）
-- **数据采集**: Playwright (Chromium headless browser)
+- **数据采集**: Playwright (Chromium headless browser) + yt-dlp
 - **异步框架**: asyncio + aiohttp
 - **Web框架**: FastAPI + Jinja2 + Uvicorn
 - **数据库**: SQLite（aiosqlite 异步驱动）
@@ -105,9 +105,13 @@ bilibili_downloader/
 ├── config.py          # 配置常量 + load_settings/save_settings（JSON持久化）
 ├── main.py            # 程序入口（委托cli.main）
 ├── browser.py         # PlaywrightBrowser — 浏览器生命周期管理 + Cookie文件I/O
-├── storage/
-│   ├── database.py    # Database类 — SQLite异步CRUD（platform/creator/video/download四表 + 标签）
-│   └── files.py       # 文件命名模板 + 路径解析 + 非法字符过滤（含bvid防重名）
+├── platforms/
+│   ├── __init__.py    # 包导出
+│   ├── base.py        # BasePlatform 抽象类 + PlatformRegistry 注册中心 + create_registry
+│   ├── bilibili.py    # BilibiliPlatform — 封装 bilibili/ 模块（Playwright采集 + aiohttp双流下载）
+│   └── youtube.py     # YouTubePlatform — yt-dlp extract_info 采集 + yt-dlp download 下载
+├── youtube/
+│   └── __init__.py    # 便捷导入
 ├── bilibili/
 │   ├── api.py         # BilibiliAPI — 获取视频流URL + get_video_info(含标签) + fetch_videos_by_api(API补全)
 │   ├── parser.py      # 纯函数 — 解析API响应（空间信息/视频列表(含tag)/合集/DASH流）
@@ -117,12 +121,15 @@ bilibili_downloader/
 │   ├── manager.py     # DownloadManager — 队列构建、Worker池调度、并发信号量、取消事件
 │   ├── worker.py      # download_video — 单视频下载（cid/标签补充 + 双流下载 + ffmpeg合并 + 断点续传 + 限速 + WS广播）
 │   └── retry.py       # retry_async — 指数退避重试，自动识别永久错误
+├── storage/
+│   ├── database.py    # Database类 — SQLite异步CRUD（platform/creator/video/download/task五表 + 标签）
+│   └── files.py       # 文件命名模板 + 路径解析 + 非法字符过滤（含bvid防重名）
 ├── cli/
 │   └── main.py        # argparse命令解析 + Cookie解析 + QR登录 + 两阶段流程
 └── web/
     ├── app.py          # FastAPI应用工厂 + Jinja2 Environment（直接使用，绕过Starlette兼容问题）
     ├── routes.py       # REST API（30+端点: stats/downloads/tasks/creators/sections/tags/settings/cookie/视频文件服务/存储检测）
-    ├── task_service.py  # TaskService — 后台任务运行（串行采集队列+API补全+下载调度+Cookie管理）
+    ├── task_service.py  # TaskService — 多平台后台任务运行（PlatformRegistry识别 → 按平台策略采集+下载）
     ├── ws_manager.py    # WSManager — WebSocket连接管理与广播
     └── templates/
         └── index.html  # 仪表盘（统计+Tab+筛选+标签多选(OR)+进度条+设置+任务面板+视频播放器）
@@ -319,9 +326,17 @@ python -m pytest tests/ -v    # 54个测试
 
 ### V2 待做
 
-- 多平台支持（YouTube等）
 - 远程访问WebSocket安全
 - 批量任务导入/导出
+
+### V3 已完成
+
+**多平台架构**
+- 平台抽象层（`platforms/base.py` — BasePlatform 抽象类 + PlatformRegistry 注册中心）
+- Bilibili 平台封装（`platforms/bilibili.py` — 调用现有 bilibili/ 模块）
+- YouTube 平台实现（`platforms/youtube.py` — yt-dlp extract_info + download）
+- URL 自动识别平台（PlatformRegistry.identify 根据 URL 匹配平台）
+- TaskService 多平台任务执行（submit_task 自动识别 → 按平台策略采集和下载）
 
 ## Agent skills
 

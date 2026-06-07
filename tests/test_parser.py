@@ -60,6 +60,71 @@ class TestParseVideoList:
         videos = parse_video_list(data)
         assert videos == []
 
+    def test_parse_videos_filters_paid(self):
+        """付费/充电专属视频（price > 0）应被过滤掉。"""
+        from bilibili_downloader.bilibili.parser import parse_video_list
+
+        data = {
+            "data": {
+                "list": {
+                    "vlist": [
+                        {
+                            "bvid": "BV1free",
+                            "title": "Free Video",
+                            "length": "3:45",
+                            "created": 1700000000,
+                            "cid": 12345,
+                            "aid": 67890,
+                            "price": 0,
+                        },
+                        {
+                            "bvid": "BV1paid",
+                            "title": "Paid Video",
+                            "length": "10:00",
+                            "created": 1700001000,
+                            "cid": 11111,
+                            "aid": 22222,
+                            "price": 200,
+                        },
+                        {
+                            "bvid": "BV1charge",
+                            "title": "Charging Exclusive",
+                            "length": "5:30",
+                            "created": 1700002000,
+                            "cid": 33333,
+                            "aid": 44444,
+                            "price": 500,
+                        },
+                    ]
+                }
+            }
+        }
+        videos = parse_video_list(data)
+        assert len(videos) == 1
+        assert videos[0]["remote_id"] == "BV1free"
+
+    def test_parse_videos_no_price_field(self):
+        """没有 price 字段的视频应正常解析（免费视频）。"""
+        from bilibili_downloader.bilibili.parser import parse_video_list
+
+        data = {
+            "data": {
+                "list": {
+                    "vlist": [
+                        {
+                            "bvid": "BV1xx",
+                            "title": "Video A",
+                            "length": "3:45",
+                            "created": 1700000000,
+                        },
+                    ]
+                }
+            }
+        }
+        videos = parse_video_list(data)
+        assert len(videos) == 1
+        assert videos[0]["remote_id"] == "BV1xx"
+
 
 class TestParseSections:
     def test_parse_sections(self):

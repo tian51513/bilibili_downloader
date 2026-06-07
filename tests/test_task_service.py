@@ -39,7 +39,7 @@ async def test_submit_invalid_url():
         await ts.submit_task("https://example.com/invalid")
         assert False, "Should have raised ValueError"
     except ValueError as e:
-        assert "Invalid" in str(e)
+        assert "无法识别" in str(e) or "Invalid" in str(e)
 
 
 async def test_broadcast_calls_ws_manager():

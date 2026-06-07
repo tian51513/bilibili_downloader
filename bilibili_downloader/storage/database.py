@@ -80,34 +80,52 @@ class Database:
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
 
+    async def _fresh_conn(self):
+        """创建全新的数据库连接。"""
+        if self._conn:
+            try:
+                await self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+        conn = await aiosqlite.connect(self.db_path)
+        conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA busy_timeout=5000")
+        self._conn = conn
+        logger.info("数据库连接已建立")
+
+    async def _xq(self, sql, params=()):
+        """执行 SQL，写操作自动 commit。"""
+        cur = await self._conn.execute(sql, params)
+        if sql.strip().upper().startswith(("INSERT", "UPDATE", "DELETE", "ALTER", "DROP")):
+            await self._conn.commit()
+        return cur
+
     async def init(self):
-        self._conn = await aiosqlite.connect(self.db_path)
-        self._conn.row_factory = aiosqlite.Row
+        await self._fresh_conn()
         await self._conn.executescript(_SCHEMA)
-        await self._conn.commit()
         # Migration: add tags column if missing
         try:
-            await self._conn.execute("ALTER TABLE video ADD COLUMN tags TEXT")
-            await self._conn.commit()
+            await self._xq("ALTER TABLE video ADD COLUMN tags TEXT")
         except Exception:
             pass  # column already exists
         # Migration: add audio_url and merge_status to download table
         for col, col_type in [("audio_url", "TEXT"), ("merge_status", "TEXT DEFAULT NULL")]:
             try:
-                await self._conn.execute(f"ALTER TABLE download ADD COLUMN {col} {col_type}")
-                await self._conn.commit()
+                await self._xq(f"ALTER TABLE download ADD COLUMN {col} {col_type}")
             except Exception:
                 pass  # column already exists
         # Migration: add total_size to download table
         try:
-            await self._conn.execute("ALTER TABLE download ADD COLUMN total_size INTEGER")
-            await self._conn.commit()
+            await self._xq("ALTER TABLE download ADD COLUMN total_size INTEGER")
+
         except Exception:
             pass  # column already exists
         # Migration: add display_name to task table
         try:
-            await self._conn.execute("ALTER TABLE task ADD COLUMN display_name TEXT")
-            await self._conn.commit()
+            await self._xq("ALTER TABLE task ADD COLUMN display_name TEXT")
+
         except Exception:
             pass  # column already exists
 
@@ -118,25 +136,24 @@ class Database:
     # --- Platform ---
 
     async def insert_platform(self, name: str, base_url: str | None = None) -> int:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "INSERT INTO platform (name, base_url) VALUES (?, ?)", (name, base_url)
         )
-        await self._conn.commit()
         return cur.lastrowid
 
     async def get_all_platforms(self) -> list[dict]:
-        cur = await self._conn.execute("SELECT * FROM platform")
+        cur = await self._xq("SELECT * FROM platform")
         return [dict(r) for r in await cur.fetchall()]
 
     async def get_platform(self, platform_id: int) -> dict:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT * FROM platform WHERE id=?", (platform_id,)
         )
         row = await cur.fetchone()
         return dict(row) if row else None
 
     async def get_platform_by_name(self, name: str) -> dict:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT * FROM platform WHERE name=?", (name,)
         )
         row = await cur.fetchone()
@@ -152,23 +169,22 @@ class Database:
         space_url: str,
         avatar_url: str | None = None,
     ) -> int:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "INSERT INTO creator (platform_id, remote_id, name, space_url, avatar_url) "
             "VALUES (?, ?, ?, ?, ?)",
             (platform_id, remote_id, name, space_url, avatar_url),
         )
-        await self._conn.commit()
         return cur.lastrowid
 
     async def get_creator(self, creator_id: int) -> dict:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT * FROM creator WHERE id=?", (creator_id,)
         )
         row = await cur.fetchone()
         return dict(row) if row else None
 
     async def get_creator_by_remote(self, platform_id: int, remote_id: str) -> dict:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT * FROM creator WHERE platform_id=? AND remote_id=?",
             (platform_id, remote_id),
         )
@@ -177,10 +193,9 @@ class Database:
 
     async def update_creator_sync(self, creator_id: int):
         now = datetime.now(timezone.utc).isoformat()
-        await self._conn.execute(
+        await self._xq(
             "UPDATE creator SET last_sync=? WHERE id=?", (now, creator_id)
         )
-        await self._conn.commit()
 
     # --- Video ---
 
@@ -197,7 +212,7 @@ class Database:
         tags: list[str] | None = None,
     ) -> int:
         tags_json = json.dumps(tags, ensure_ascii=False) if tags else None
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "INSERT INTO video "
             "(creator_id, remote_id, title, duration, pubdate, extra, section_id, section_name, tags) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -213,18 +228,17 @@ class Database:
                 tags_json,
             ),
         )
-        await self._conn.commit()
         return cur.lastrowid
 
     async def get_video(self, video_id: int) -> dict:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT * FROM video WHERE id=?", (video_id,)
         )
         row = await cur.fetchone()
         return dict(row) if row else None
 
     async def get_video_by_remote(self, creator_id: int, remote_id: str) -> dict:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT * FROM video WHERE creator_id=? AND remote_id=?",
             (creator_id, remote_id),
         )
@@ -232,7 +246,7 @@ class Database:
         return dict(row) if row else None
 
     async def get_videos_by_creator(self, creator_id: int) -> list[dict]:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT * FROM video WHERE creator_id=?", (creator_id,)
         )
         rows = await cur.fetchall()
@@ -240,13 +254,12 @@ class Database:
 
     async def update_video_tags(self, video_id: int, tags: list[str]):
         tags_json = json.dumps(tags, ensure_ascii=False)
-        await self._conn.execute(
+        await self._xq(
             "UPDATE video SET tags=? WHERE id=?", (tags_json, video_id)
         )
-        await self._conn.commit()
 
     async def get_tags(self) -> list[dict]:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT v.tags, COUNT(*) as video_count "
             "FROM video v WHERE v.tags IS NOT NULL AND v.tags != '' "
             "GROUP BY v.tags ORDER BY video_count DESC"
@@ -266,29 +279,28 @@ class Database:
     async def insert_download(
         self, video_id: int, save_path: str, resolution: str
     ) -> int:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "INSERT OR IGNORE INTO download (video_id, save_path, resolution) "
             "VALUES (?, ?, ?)",
             (video_id, save_path, resolution),
         )
-        await self._conn.commit()
         if cur.lastrowid == 0:
             # Record exists — if it's in a terminal state, reset to pending
-            cur2 = await self._conn.execute(
+            cur2 = await self._xq(
                 "SELECT status FROM download WHERE video_id=? AND resolution=?",
                 (video_id, resolution),
             )
             old_row = await cur2.fetchone()
-            await self._conn.execute(
+            await self._xq(
                 "UPDATE download SET status='pending', save_path=?, error_msg=NULL, "
                 "started_at=NULL, finished_at=NULL, file_size=NULL, total_size=NULL "
                 "WHERE video_id=? AND resolution=? AND status IN ('failed', 'skipped')",
                 (save_path, video_id, resolution),
             )
-            await self._conn.commit()
+
             if old_row and old_row[0] != "pending":
                 logger.info(f"重置下载 video_id={video_id} 分辨率={resolution}: {old_row[0]} → pending")
-            cur = await self._conn.execute(
+            cur = await self._xq(
                 "SELECT id FROM download WHERE video_id=? AND resolution=?",
                 (video_id, resolution),
             )
@@ -297,7 +309,7 @@ class Database:
         return cur.lastrowid
 
     async def get_download(self, download_id: int) -> dict:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT * FROM download WHERE id=?", (download_id,)
         )
         row = await cur.fetchone()
@@ -308,42 +320,40 @@ class Database:
     ):
         now = datetime.now(timezone.utc).isoformat()
         if status == "downloading":
-            await self._conn.execute(
+            await self._xq(
                 "UPDATE download SET status=?, started_at=? WHERE id=?",
                 (status, now, download_id),
             )
         elif status in ("completed", "skipped", "failed"):
-            await self._conn.execute(
+            await self._xq(
                 "UPDATE download SET status=?, finished_at=?, error_msg=? WHERE id=?",
                 (status, now, error_msg, download_id),
             )
         else:
-            await self._conn.execute(
+            await self._xq(
                 "UPDATE download SET status=?, error_msg=NULL, started_at=NULL, finished_at=NULL, file_size=NULL WHERE id=?",
                 (status, download_id),
             )
-        await self._conn.commit()
 
     async def update_download_progress(self, download_id: int, file_size: int, resolution: str | None = None):
         if resolution:
-            await self._conn.execute(
+            await self._xq(
                 "UPDATE download SET file_size=?, resolution=? WHERE id=?",
                 (file_size, resolution, download_id),
             )
         else:
-            await self._conn.execute(
+            await self._xq(
                 "UPDATE download SET file_size=? WHERE id=?",
                 (file_size, download_id),
             )
-        await self._conn.commit()
 
     async def get_all_creators(self) -> list[dict]:
-        cur = await self._conn.execute("SELECT * FROM creator")
+        cur = await self._xq("SELECT * FROM creator")
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
     async def get_existing_downloads(self, creator_id: int) -> set:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT v.remote_id, d.resolution FROM download d "
             "JOIN video v ON d.video_id = v.id "
             "JOIN creator c ON v.creator_id = c.id "
@@ -395,7 +405,7 @@ class Database:
         order_by = f"ORDER BY {sort_col} IS NULL, {sort_col} {sort_dir}"
         # Count total
         params_count = params[:]
-        cur_count = await self._conn.execute(
+        cur_count = await self._xq(
             f"SELECT COUNT(*) FROM download d "
             f"JOIN video v ON d.video_id = v.id "
             f"JOIN creator c ON v.creator_id = c.id "
@@ -404,7 +414,7 @@ class Database:
         total = (await cur_count.fetchone())[0]
         # Fetch page
         params.extend([page_size, offset])
-        cur = await self._conn.execute(
+        cur = await self._xq(
             f"SELECT d.*, v.title, v.section_name, v.remote_id as bvid, v.tags, v.duration, "
             f"c.name as creator_name, c.id as creator_id, "
             f"p.name as platform_name, p.base_url as platform_url "
@@ -424,7 +434,7 @@ class Database:
         }
 
     async def get_creators_with_stats(self) -> list[dict]:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT c.id, c.name, c.avatar_url, "
             "COUNT(v.id) as video_count, "
             "COUNT(CASE WHEN d.status='completed' THEN 1 END) as completed, "
@@ -439,7 +449,7 @@ class Database:
         return [dict(r) for r in rows]
 
     async def get_sections(self) -> list[dict]:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT DISTINCT v.section_name, c.name as creator_name, c.id as creator_id "
             "FROM video v JOIN creator c ON v.creator_id = c.id "
             "WHERE v.section_name IS NOT NULL AND v.section_name != '' "
@@ -450,12 +460,12 @@ class Database:
 
     async def get_stats(self) -> dict:
         result = {}
-        cur = await self._conn.execute("SELECT COUNT(*) FROM creator")
+        cur = await self._xq("SELECT COUNT(*) FROM creator")
         result["total_creators"] = (await cur.fetchone())[0]
-        cur = await self._conn.execute("SELECT COUNT(*) FROM video")
+        cur = await self._xq("SELECT COUNT(*) FROM video")
         result["total_videos"] = (await cur.fetchone())[0]
         for status in ("pending", "downloading", "completed", "skipped", "failed"):
-            cur = await self._conn.execute(
+            cur = await self._xq(
                 "SELECT COUNT(*) FROM download WHERE status=?", (status,)
             )
             result[status] = (await cur.fetchone())[0]
@@ -466,15 +476,14 @@ class Database:
     async def insert_task(
         self, platform_id: int, space_url: str, space_uid: str | None = None,
     ) -> int:
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "INSERT INTO task (platform_id, space_url, space_uid) VALUES (?, ?, ?)",
             (platform_id, space_url, space_uid),
         )
-        await self._conn.commit()
         return cur.lastrowid
 
     async def get_task(self, task_id: int) -> dict | None:
-        cur = await self._conn.execute("SELECT * FROM task WHERE id=?", (task_id,))
+        cur = await self._xq("SELECT * FROM task WHERE id=?", (task_id,))
         row = await cur.fetchone()
         return dict(row) if row else None
 
@@ -489,12 +498,12 @@ class Database:
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * page_size
         params_count = params[:]
-        cur_count = await self._conn.execute(
+        cur_count = await self._xq(
             f"SELECT COUNT(*) FROM task t {where}", params_count,
         )
         total = (await cur_count.fetchone())[0]
         params.extend([page_size, offset])
-        cur = await self._conn.execute(
+        cur = await self._xq(
             f"SELECT t.*, c.name as creator_name, c.avatar_url, t.display_name, "
             f"p.name as platform_name, p.base_url as platform_url, "
             f"(SELECT COALESCE(SUM(d.file_size), 0) FROM download d "
@@ -551,26 +560,36 @@ class Database:
             sets.append("display_name=?")
             params.append(display_name)
         params.append(task_id)
-        await self._conn.execute(
+        await self._xq(
             f"UPDATE task SET {', '.join(sets)} WHERE id=?", params,
         )
-        await self._conn.commit()
 
     async def get_task_by_url(self, space_url: str) -> dict | None:
-        cur = await self._conn.execute("SELECT * FROM task WHERE space_url=?", (space_url,))
+        cur = await self._xq("SELECT * FROM task WHERE space_url=?", (space_url,))
         row = await cur.fetchone()
         return dict(row) if row else None
 
     async def update_task_url(self, task_id: int, space_url: str, space_uid: str | None = None):
         if not space_uid:
-            match = re.search(r"https?://space\.bilibili\.com/(\d+)", space_url)
-            space_uid = match.group(1) if match else None
-        await self._conn.execute(
+            # 尝试从 URL 提取 space_uid（支持多平台）
+            from bilibili_downloader.platforms.base import PlatformRegistry
+            registry = PlatformRegistry()
+            platform = registry.identify(space_url)
+            if platform:
+                try:
+                    parsed = platform.parse_url(space_url)
+                    space_uid = parsed["creator_id"]
+                except Exception:
+                    pass
+            else:
+                # 回退到 bilibili 硬编码模式
+                match = re.search(r"https?://space\.bilibili\.com/(\d+)", space_url)
+                space_uid = match.group(1) if match else None
+        await self._xq(
             "UPDATE task SET space_url=?, space_uid=?, status='pending', error_message=NULL, "
             "cookie_status='valid', total_videos=0, scraped_videos=0, downloaded_videos=0, total_downloads=0 WHERE id=?",
             (space_url, space_uid, task_id),
         )
-        await self._conn.commit()
 
     async def cleanup_stale_downloads(self):
         """Clean up downloads stuck in 'downloading' after process kill.
@@ -578,7 +597,7 @@ class Database:
         Never resets to 'pending' to avoid unexpected re-downloads.
         """
         import os
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT id, save_path FROM download WHERE status='downloading'"
         )
         rows = await cur.fetchall()
@@ -587,18 +606,17 @@ class Database:
         for row in rows:
             dl_id, save_path = row["id"], row["save_path"]
             if save_path and os.path.exists(save_path):
-                await self._conn.execute(
+                await self._xq(
                     "UPDATE download SET status='completed', finished_at=datetime('now'), "
                     "error_msg=NULL WHERE id=?", (dl_id,)
                 )
                 completed += 1
             else:
-                await self._conn.execute(
+                await self._xq(
                     "UPDATE download SET status='failed', error_msg='进程中断，下载未完成', "
                     "started_at=NULL WHERE id=?", (dl_id,)
                 )
                 failed += 1
-        await self._conn.commit()
         if completed or failed:
             logger.info(f"清理卡死下载: {completed} 个已完成(文件存在), {failed} 个标记失败")
         return completed, failed
@@ -610,7 +628,7 @@ class Database:
         """
         import os
         new_output_dir = os.path.normpath(new_output_dir)
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT id, save_path FROM download WHERE status='completed'"
         )
         rows = await cur.fetchall()
@@ -620,7 +638,7 @@ class Database:
             dl_id, save_path = row["id"], row["save_path"]
             if os.path.exists(save_path):
                 # Also backfill file_size if NULL
-                await self._conn.execute(
+                await self._xq(
                     "UPDATE download SET file_size=COALESCE(file_size, ?) WHERE id=? AND file_size IS NULL",
                     (os.path.getsize(save_path), dl_id),
                 )
@@ -630,45 +648,70 @@ class Database:
             new_path = os.path.join(new_output_dir, filename)
             if os.path.exists(new_path):
                 size = os.path.getsize(new_path)
-                await self._conn.execute(
+                await self._xq(
                     "UPDATE download SET save_path=?, file_size=COALESCE(file_size, ?) WHERE id=?",
                     (new_path, size, dl_id),
                 )
                 moved += 1
             else:
-                await self._conn.execute(
+                await self._xq(
                     "UPDATE download SET status='pending', error_msg='文件不存在', "
                     "started_at=NULL, finished_at=NULL, file_size=NULL WHERE id=?", (dl_id,)
                 )
                 missing += 1
-        await self._conn.commit()
         if moved or missing:
             logger.info(f"存储检测: {moved} 个路径已更新, {missing} 个标记为待下载")
         return {"moved": moved, "missing": missing, "total_checked": len(rows)}
 
     async def reset_task_downloads(self, creator_id: int):
         """Reset non-completed downloads for a creator to pending status (skip completed)."""
-        await self._conn.execute(
+        await self._xq(
             "UPDATE download SET status='pending', error_msg=NULL, started_at=NULL, finished_at=NULL, file_size=NULL "
             "WHERE video_id IN (SELECT id FROM video WHERE creator_id=?) AND status != 'completed'",
             (creator_id,),
         )
-        await self._conn.commit()
 
     async def delete_task(self, task_id: int):
-        """Delete a task and cascade delete its downloads and videos."""
-        await self._conn.execute("DELETE FROM download WHERE video_id IN "
-                                 "(SELECT id FROM video WHERE creator_id = "
-                                 "(SELECT creator_id FROM task WHERE id = ? AND creator_id IS NOT NULL))", (task_id,))
-        await self._conn.execute("DELETE FROM video WHERE creator_id = "
-                                 "(SELECT creator_id FROM task WHERE id = ? AND creator_id IS NOT NULL)", (task_id,))
-        await self._conn.execute("DELETE FROM task WHERE id = ?", (task_id,))
-        await self._conn.commit()
+        """Delete a task and cascade delete its downloads, videos, and creator (if no other tasks reference it)."""
+        # 获取 creator_id
+        task = await self.get_task(task_id)
+        cid = task.get("creator_id") if task else None
+
+        if cid:
+            # 删除该 creator 下所有下载记录
+            await self._xq("DELETE FROM download WHERE video_id IN "
+                                     "(SELECT id FROM video WHERE creator_id=?)", (cid,))
+            # 删除该 creator 下所有视频
+            await self._xq("DELETE FROM video WHERE creator_id=?", (cid,))
+            # 删除任务
+            await self._xq("DELETE FROM task WHERE id=?", (task_id,))
+            # 如果该 creator 不再有其他任务，一并删除 creator 记录
+            cur = await self._xq(
+                "SELECT COUNT(*) FROM task WHERE creator_id=?", (cid,))
+            row = await cur.fetchone()
+            if row and row[0] == 0:
+                await self._xq("DELETE FROM creator WHERE id=?", (cid,))
+        else:
+            # 无 creator_id 的任务，直接删除
+            await self._xq("DELETE FROM task WHERE id=?", (task_id,))
 
     async def delete_download(self, download_id: int):
-        """Delete a single download record."""
-        await self._conn.execute("DELETE FROM download WHERE id=?", (download_id,))
-        await self._conn.commit()
+        """Delete a single download record and sync related task status."""
+        dl = await self.get_download(download_id)
+        if not dl:
+            return
+        video_id = dl["video_id"]
+        await self._xq("DELETE FROM download WHERE id=?", (download_id,))
+        # 查找关联的 creator → task，同步任务状态
+        cur = await self._xq(
+            "SELECT v.creator_id FROM video v WHERE v.id=?", (video_id,))
+        row = await cur.fetchone()
+        if row:
+            cid = row[0]
+            tcur = await self._xq(
+                "SELECT id FROM task WHERE creator_id=?", (cid,))
+            for trow in await tcur.fetchall():
+                await self.sync_task_status_from_downloads(trow[0])
 
     async def sync_task_status_from_downloads(self, task_id: int):
         """根据下载状态同步任务状态。"""
@@ -677,7 +720,7 @@ class Database:
             return
         cid = task["creator_id"]
         # 统计该 creator 下所有 download 的状态
-        cur = await self._conn.execute(
+        cur = await self._xq(
             "SELECT status, COUNT(*) as cnt FROM download d "
             "JOIN video v ON d.video_id = v.id WHERE v.creator_id=? GROUP BY d.status",
             (cid,),
@@ -695,7 +738,7 @@ class Database:
 
         if downloading > 0:
             new_status = "downloading"
-        elif pending == total:
+        elif pending > 0:
             new_status = "pending"
         elif failed == total:
             new_status = "failed"
@@ -704,7 +747,7 @@ class Database:
         elif completed + skipped + failed == total:
             new_status = "completed"
         else:
-            new_status = "downloading"
+            new_status = "pending"
 
         if new_status != task["status"]:
             error_msg = None if new_status in ("pending", "downloading") else task.get("error_message")
@@ -717,8 +760,7 @@ class Database:
 
     async def clear_all_downloads(self):
         """Delete all downloads, videos, creators, and tasks."""
-        await self._conn.execute("DELETE FROM download")
-        await self._conn.execute("DELETE FROM video")
-        await self._conn.execute("DELETE FROM creator")
-        await self._conn.execute("DELETE FROM task")
-        await self._conn.commit()
+        await self._xq("DELETE FROM download")
+        await self._xq("DELETE FROM video")
+        await self._xq("DELETE FROM creator")
+        await self._xq("DELETE FROM task")

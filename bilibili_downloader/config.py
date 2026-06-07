@@ -38,6 +38,9 @@ DEFAULT_WEB_PORT = 8080
 BILIBILI_API_BASE = "https://api.bilibili.com"
 BILIBILI_SPACE_URL_PATTERN = r"https?://space\.bilibili\.com/(\d+)"
 
+# YouTube
+YOUTUBE_PLAYLIST_URL_PATTERN = r"https?://(?:www\.)?youtube\.com/playlist\?list=([A-Za-z0-9_-]+)"
+
 # Settings persistence
 SETTINGS_PATH = "bilibili_settings.json"
 

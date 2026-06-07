@@ -5,15 +5,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from bilibili_downloader.web.routes import create_routes
-from bilibili_downloader.web.ws_manager import WSManager
+from bilibili_downloader.web.ws_manager import get_ws_manager
 
 logger = logging.getLogger(__name__)
-
-_ws_manager = WSManager()
-
-
-def get_ws_manager() -> WSManager:
-    return _ws_manager
 
 
 def create_app(db, task_service=None):
@@ -41,14 +35,16 @@ def create_app(db, task_service=None):
     for path, (handler, methods) in routes.items():
         app.add_api_route(path, handler, methods=methods)
 
+    ws_manager = get_ws_manager()
+
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()
-        _ws_manager.connect(ws)
+        ws_manager.connect(ws)
         try:
             while True:
                 await ws.receive_text()
         except WebSocketDisconnect:
-            _ws_manager.disconnect(ws)
+            ws_manager.disconnect(ws)
 
     return app

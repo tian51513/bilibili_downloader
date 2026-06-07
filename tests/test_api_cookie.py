@@ -10,7 +10,7 @@ async def test_validate_cookie_valid():
     api.headers = {"User-Agent": "test", "Referer": "https://www.bilibili.com/"}
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"code": 0, "data": {"isLogin": True}})
+    mock_resp.json = AsyncMock(return_value={"code": 0, "data": {"isLogin": True, "mid": 12345}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     session.get = MagicMock(return_value=mock_resp)
@@ -26,7 +26,7 @@ async def test_validate_cookie_expired():
     api.headers = {"User-Agent": "test", "Referer": "https://www.bilibili.com/"}
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"code": 0, "data": {"isLogin": False}})
+    mock_resp.json = AsyncMock(return_value={"code": 0, "data": {"isLogin": False, "mid": 0}})
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     session.get = MagicMock(return_value=mock_resp)

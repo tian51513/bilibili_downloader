@@ -27,9 +27,15 @@ class BilibiliScraper:
     导航到UP主空间页面，被动读取页面JS发出的API响应。
     """
 
+    MAX_CACHE_SIZE = 20  # 最多缓存采集结果数量
+
     def __init__(self, browser):
         self._browser = browser
         self._collected: dict[str, dict] = {}
+
+    def clear_cache(self):
+        """清理采集缓存，释放内存。"""
+        self._collected.clear()
 
     async def collect(self, mid: str) -> dict:
         """采集一个UP主的全部数据（空间信息 + 视频列表 + 合集）。
@@ -39,6 +45,13 @@ class BilibiliScraper:
         """
         if mid in self._collected:
             return self._collected[mid]
+
+        # 缓存淘汰：超过上限时清理最早的一半
+        if len(self._collected) >= self.MAX_CACHE_SIZE:
+            oldest = list(self._collected.keys())[:self.MAX_CACHE_SIZE // 2]
+            for k in oldest:
+                del self._collected[k]
+            logger.debug(f"Scraper 缓存淘汰: 清理 {len(oldest)} 条旧记录")
 
         page = self._browser.page
         space_info_raw = None
@@ -162,19 +175,29 @@ class BilibiliScraper:
         finally:
             page.remove_listener('response', on_response)
 
-        # 解析数据并去重
+        # 解析数据并去重（付费/充电专属视频已在 parse_video_list 中过滤）
         seen_bvids: set[str] = set()
+        paid_bvids: set[str] = set()
         videos: list[dict] = []
+        paid_count = 0
         for resp in video_responses:
+            for v in resp.get('data', {}).get('list', {}).get('vlist', []):
+                if v.get('price', 0) and v['price'] > 0:
+                    paid_bvids.add(v['bvid'])
+                    paid_count += 1
             for v in parse_video_list(resp):
                 if v['remote_id'] not in seen_bvids:
                     seen_bvids.add(v['remote_id'])
                     videos.append(v)
+        if paid_count > 0:
+            logger.info(f"过滤 {paid_count} 个付费/充电专属视频（不录入系统）")
 
         # 将合集视频中尚未出现在投稿列表里的也加入
         sections = parse_sections(section_raw) if section_raw else []
         new_from_sections = 0
         for s in sections:
+            if s['remote_id'] in paid_bvids:
+                continue
             if s['remote_id'] not in seen_bvids:
                 videos.append({
                     'remote_id': s['remote_id'],
