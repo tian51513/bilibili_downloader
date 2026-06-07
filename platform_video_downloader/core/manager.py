@@ -1,9 +1,9 @@
 import asyncio
 import logging
 
-from bilibili_downloader.config import DEFAULT_NAME_TEMPLATE, MAX_CONCURRENT_DOWNLOADS, MAX_CONCURRENT_API_REQUESTS
-from bilibili_downloader.core.worker import download_video
-from bilibili_downloader.storage.files import build_filename, resolve_save_path
+from platform_video_downloader.config import DEFAULT_NAME_TEMPLATE, MAX_CONCURRENT_DOWNLOADS, MAX_CONCURRENT_API_REQUESTS
+from platform_video_downloader.core.worker import download_video
+from platform_video_downloader.storage.files import build_filename, resolve_save_path
 
 logger = logging.getLogger(__name__)
 

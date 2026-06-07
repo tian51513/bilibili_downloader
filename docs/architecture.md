@@ -1,6 +1,6 @@
-# Bilibili Downloader V3 设计文档
+# Platform Video Downloader V4 设计文档
 
-> 版本: 3.0 | 日期: 2026-06-07 | 状态: 已发布
+> 版本: 4.0 | 日期: 2026-06-07 | 状态: 已发布
 
 ---
 
@@ -11,6 +11,7 @@
 V1 核心功能：Playwright浏览器被动采集、QR扫码登录、aiohttp异步下载、双流合并+ffmpeg、断点续传、限速、SQLite状态追踪、Web仪表盘。
 V2 新增：Web任务管理、API补全采集、WebSocket实时推送、视频播放器、多分辨率+标签筛选。
 V3 新增：多平台架构（BasePlatform + PlatformRegistry）、YouTube集成（yt-dlp）、统一Cookie管理（Bilibili/YouTube双Tab）、Chrome Cookie导入（browser-cookie3）、系统代理自动检测、下载引擎增强（87008/416错误处理、平台分离下载、僵尸进程检测）。
+V4 新增：项目重命名（bilibili_downloader → platform_video_downloader / pvd）、付费视频记录彻底删除、存储检测两阶段恢复、视频标题模糊搜索、UP主筛选动态刷新、扫码登录按钮智能显隐、终端日志降噪。
 
 ### 1.1 设计目标
 
@@ -27,8 +28,8 @@ V3 新增：多平台架构（BasePlatform + PlatformRegistry）、YouTube集成
 
 ### 1.2 运行形态
 
-- **CLI模式**: `bilibili-dl <URL>` 命令行触发下载（自动识别B站/YouTube URL）
-- **Web模式**: `bilibili-dl web` 或 `start.bat` 启动监控仪表盘 + 任务管理
+- **CLI模式**: `pvd <URL>` 命令行触发下载（自动识别B站/YouTube URL）
+- **Web模式**: `pvd web` 或 `start.bat` 启动监控仪表盘 + 任务管理
 
 ---
 
@@ -333,7 +334,7 @@ Worker 在以下状态变化点通过 WebSocket 广播：
 | 进度更新 | `{type: "download_progress", download_id, file_size, total_size}` |
 | 开始合并（B站） | `{type: "download_progress", status: "merging"}` |
 | 下载完成 | `{type: "download_progress", status: "completed", file_size}` |
-| 跳过 | `{type: "download_progress", status: "skipped"}` |
+| 跳过/移除 | `{type: "download_progress", status: "removed"}` |
 | 失败 | `{type: "download_progress", status: "failed"}` |
 
 ### 5.5 断点续传
@@ -355,10 +356,10 @@ Worker 在以下状态变化点通过 WebSocket 广播：
 
 | 错误码 | 处理方式 | 说明 |
 |--------|----------|------|
-| 87008 | skip（永久错误） | 付费专属视频 |
-| 62002 | skip（永久错误） | 视频不可用 |
-| -404 | skip（永久错误） | 视频已被删除 |
-| is_upower_exclusive | skip | UP主充电专属视频 |
+| 87008 | 删除记录（永久错误） | 付费专属视频 |
+| 62002 | 删除记录（永久错误） | 视频不可用 |
+| -404 | 删除记录（永久错误） | 视频已被删除 |
+| is_upower_exclusive | 删除记录 | UP主充电专属视频 |
 | 416 Range Not Satisfiable | 删临时文件重下 | 流URL过期/变更 |
 | -403 | 触发QR登录重试 | Cookie过期 |
 | 网络超时 | 指数退避重试(3次) | 临时性错误 |
@@ -402,8 +403,9 @@ init → scraping → pending → downloading → completed
 - 有 downloading → downloading
 - 全部 pending → pending
 - 全部 failed → failed
-- 全部 completed/skipped → completed
+- 全部 completed → completed
 - 混合状态 → downloading
+- 即使状态不变，total_videos/downloaded_videos 数值变化时也触发更新
 
 ### 6.4 重置下载策略
 
@@ -432,7 +434,7 @@ FastAPI + Jinja2 + 原生JS + WebSocket
 | 视频跳转 | B站视频链接到bilibili.com，YouTube视频链接到youtube.com |
 | 统计卡片 | 6个stat-card（总数/各状态数） |
 | 状态Tab | 6个tab（全部/下载中/已完成/等待/已跳过/失败） |
-| UP主筛选 | 下拉框，显示 已下载/总数 |
+| UP主筛选 | 下拉框，显示 已下载/总数，点击时刷新最新数据 |
 | 平台筛选 | 按平台过滤（B站/YouTube） |
 | 标签筛选 | OR关系，搜索/全选/反选/清除，点击标签快速筛选 |
 | 下载进度 | downloading行高亮 + 进度条 + merging状态 |
@@ -448,7 +450,9 @@ FastAPI + Jinja2 + 原生JS + WebSocket
 | 代理检测 | 系统代理自动检测（Windows注册表/Unix环境变量） |
 | 设置保存反馈 | 保存设置时显示成功提示 |
 | 采集进度 | 实时显示已采集/总视频数（scrape_progress WebSocket推送） |
-| 存储检测 | 扫描文件路径有效性，自动更新新路径/标记缺失为待下载 |
+| 标题搜索 | 模糊搜索筛选（LIKE匹配，300ms防抖） |
+| Cookie状态 | 扫码登录按钮根据Cookie有效性自动显隐 |
+| 存储检测 | 扫描文件路径有效性，Phase1恢复非completed但文件存在的下载，Phase2验证completed路径有效性 |
 
 ### 7.3 REST API
 
@@ -594,7 +598,8 @@ UNIQUE(video_id, resolution)
 ```
 download: pending → downloading → merging → completed
                                    ↓
-                          skipped / failed
+                                failed
+         （付费视频直接删除记录，不进入状态机）
 
 task: init → scraping → pending → downloading → completed
                    ↓           ↓
@@ -606,7 +611,7 @@ task: init → scraping → pending → downloading → completed
 ## 9. 模块结构
 
 ```
-bilibili_downloader/
+platform_video_downloader/
 ├── config.py          # 配置常量 + load_settings/save_settings（JSON持久化）
 │                      # V3: COOKIE_DIR, DEFAULT_YOUTUBE_COOKIE_CACHE_PATH, youtube_proxy
 ├── main.py            # 程序入口（委托cli.main）
@@ -654,7 +659,7 @@ bilibili_downloader/
 
 ## 10. 测试覆盖
 
-54个测试（V1），覆盖：
+80个测试（V1→V4），覆盖：
 
 | 模块 | 测试数 | 覆盖内容 |
 |------|--------|----------|
@@ -664,7 +669,7 @@ bilibili_downloader/
 | test_files.py | 7 | 命名模板、非法字符、路径解析 |
 | test_parser.py | 8 | 各类解析、时长转换、流URL选择 |
 | test_retry.py | 5 | 退避重试、永久错误、跳过错误 |
-| test_worker.py | 2 | 下载成功mock、付费视频跳过 |
+| test_worker.py | 2 | 下载成功mock、付费视频删除记录 |
 | test_manager.py | 2 | 队列处理、跳过已存在 |
 
 ---
@@ -673,8 +678,8 @@ bilibili_downloader/
 
 | 文件 | 说明 |
 |------|------|
-| bilibili_downloader.db | SQLite数据库 |
-| bilibili_settings.json | 用户设置（Web面板修改后生成） |
+| platform_video_downloader.db | SQLite数据库 |
+| platform_video_downloader_settings.json | 用户设置（Web面板修改后生成） |
 | cookies/bilibili_cookies.json | B站Cookie缓存（自动生成） |
 | cookies/youtube_cookies.txt | YouTube Cookie缓存（手动导入/Chrome提取） |
 | ./downloads/ | 默认下载目录 |
@@ -690,3 +695,46 @@ bilibili_downloader/
 | yt-dlp | YouTube视频采集(extract_info)和下载 |
 | browser-cookie3 (可选) | Chrome Cookie导入（支持Chrome v127+ App-Bound Encryption） |
 | Node.js (系统依赖) | YouTube JS签名解析运行时 |
+
+---
+
+## 13. V4 变更（项目重命名 + 增强功能）
+
+### 13.1 项目重命名
+
+| 上下文 | 旧名 | 新名 |
+|--------|------|------|
+| pip 包名 | `bilibili-downloader` | `platform-video-downloader` |
+| Python 包目录 | `bilibili_downloader/` | `platform_video_downloader/` |
+| CLI 命令 | `bilibili-dl` | `pvd` |
+| 数据库文件 | `bilibili_downloader.db` | `platform_video_downloader.db` |
+| 设置文件 | `bilibili_settings.json` | `platform_video_downloader_settings.json` |
+
+未改名内容：`bilibili/` 子包、`youtube/` 子包、BilibiliAPI 等类名、Cookie 文件名。
+
+### 13.2 数据库/设置自动迁移
+
+`config.py` 中 `get_effective_db_path()` 和 `get_effective_settings_path()` 在启动时检测旧文件存在且新文件不存在时自动重命名，确保用户升级后无缝过渡。
+
+### 13.3 付费视频记录彻底删除
+
+付费/充电专属视频（87008、62002、is_upower_exclusive、No video streams available）不再标记为 skipped，而是直接删除 download 和 video 记录。WebSocket 广播 `status: "removed"` 通知前端移除对应行。
+
+### 13.4 存储检测两阶段增强
+
+`check_storage()` 重写为两阶段：
+- **Phase 1**：扫描所有非 completed 下载，若文件已存在则恢复为 completed（含卡死的 downloading）
+- **Phase 2**：验证 completed 下载的路径有效性，更新路径变化/标记缺失
+
+返回 `(result_dict, recovered_task_ids_set)`，调用方自动刷新相关任务状态。
+
+### 13.5 下载管理增强
+
+- **标题搜索**：`get_all_downloads()` 新增 `keyword` 参数，LIKE 模糊匹配标题
+- **UP主筛选动态刷新**：下拉列表 `onfocus` 时调用 `refreshCreatorFilter()` 获取最新视频数量
+- **任务状态同步修正**：`sync_task_status_from_downloads()` 即使状态不变，total_videos/downloaded_videos 数值变化时也正确更新
+
+### 13.6 Web UI 增强
+
+- **扫码登录按钮智能显隐**：`checkCookieStatus()` 检测到有效 Cookie 时隐藏 `.btn-warning` 扫码按钮，清除 Cookie 后恢复显示
+- **终端日志降噪**：aiosqlite 和 asyncio logger 设为 WARNING 级别

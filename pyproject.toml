@@ -1,7 +1,7 @@
 [project]
-name = "bilibili-downloader"
+name = "platform-video-downloader"
 version = "0.1.0"
-description = "Bilibili UP主视频批量下载器"
+description = "多平台视频批量下载器 (Bilibili + YouTube)"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9",
@@ -16,14 +16,14 @@ dependencies = [
 ]
 
 [project.scripts]
-bilibili-dl = "bilibili_downloader.cli.main:cli_entry"
+pvd = "platform_video_downloader.cli.main:cli_entry"
 
 [build-system]
 requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["bilibili_downloader*"]
+include = ["platform_video_downloader*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

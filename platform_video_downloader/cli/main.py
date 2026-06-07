@@ -7,28 +7,30 @@ import sys
 
 import aiohttp
 
-from bilibili_downloader.config import (
+from platform_video_downloader.config import (
     BILIBILI_SPACE_URL_PATTERN,
     DEFAULT_COOKIE_CACHE_PATH,
-    DEFAULT_DB_PATH,
     DEFAULT_NAME_TEMPLATE,
     DEFAULT_RESOLUTION_PRIORITY,
     DEFAULT_WEB_PORT,
     MAX_CONCURRENT_DOWNLOADS,
+    get_effective_db_path,
 )
-from bilibili_downloader.bilibili.api import BilibiliAPI
-from bilibili_downloader.core.manager import DownloadManager
-from bilibili_downloader.storage.database import Database
-from bilibili_downloader.storage.files import build_filename, resolve_save_path
+from platform_video_downloader.bilibili.api import BilibiliAPI
+from platform_video_downloader.core.manager import DownloadManager
+from platform_video_downloader.storage.database import Database
+from platform_video_downloader.storage.files import build_filename, resolve_save_path
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 QR_LOGIN_TIMEOUT = 120  # seconds
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(prog="bilibili-dl", description="B站UP主视频批量下载器")
+    parser = argparse.ArgumentParser(prog="pvd", description="多平台视频批量下载器")
     subparsers = parser.add_subparsers(dest="command")
 
     dl_parser = subparsers.add_parser("download", help="下载UP主视频")
@@ -68,7 +70,7 @@ def _resolve_cookies(cli_cookies: list[dict], args) -> tuple[list[dict], bool]:
     Returns:
         (cookies, needs_qr_login) 元组。
     """
-    from bilibili_downloader.browser import build_cookies_from_env, load_cookies_from_file
+    from platform_video_downloader.browser import build_cookies_from_env, load_cookies_from_file
 
     if cli_cookies:
         logger.info("使用 CLI 参数提供的 cookies")
@@ -148,18 +150,18 @@ async def _qr_code_login(page) -> list[dict]:
 
 
 async def download_command(args):
-    db = Database(DEFAULT_DB_PATH)
+    db = Database(get_effective_db_path())
     await db.init()
 
     resolution_priority = [args.resolution] if args.resolution else DEFAULT_RESOLUTION_PRIORITY
 
     # --- Phase 1: 数据采集（Playwright 浏览器） ---
-    from bilibili_downloader.browser import (
+    from platform_video_downloader.browser import (
         BILIBILI_COOKIE_DOMAIN,
         PlaywrightBrowser,
         save_cookies_to_file,
     )
-    from bilibili_downloader.bilibili.scraper import BilibiliScraper
+    from platform_video_downloader.bilibili.scraper import BilibiliScraper
 
     # 构建 CLI cookies
     cli_cookies = []
@@ -278,10 +280,10 @@ async def download_command(args):
 
 async def web_command(args):
     import uvicorn
-    from bilibili_downloader.web.app import create_app
-    from bilibili_downloader.web.ws_manager import get_ws_manager
-    from bilibili_downloader.web.task_service import TaskService
-    db = Database(DEFAULT_DB_PATH)
+    from platform_video_downloader.web.app import create_app
+    from platform_video_downloader.web.ws_manager import get_ws_manager
+    from platform_video_downloader.web.task_service import TaskService
+    db = Database(get_effective_db_path())
     await db.init()
     await db.cleanup_stale_downloads()
     task_service = TaskService(db=db, ws_manager=get_ws_manager())
@@ -311,7 +313,7 @@ def main(argv=None):
 
 
 def cli_entry():
-    sys.exit(main(argv))
+    sys.exit(main())
 
 
 if __name__ == "__main__":

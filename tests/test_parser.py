@@ -3,7 +3,7 @@ import pytest
 
 class TestParseSpaceInfo:
     def test_parse_mid_and_name(self):
-        from bilibili_downloader.bilibili.parser import parse_space_info
+        from platform_video_downloader.bilibili.parser import parse_space_info
 
         data = {
             "data": {
@@ -20,7 +20,7 @@ class TestParseSpaceInfo:
 
 class TestParseVideoList:
     def test_parse_videos_basic(self):
-        from bilibili_downloader.bilibili.parser import parse_video_list
+        from platform_video_downloader.bilibili.parser import parse_video_list
 
         data = {
             "data": {
@@ -54,7 +54,7 @@ class TestParseVideoList:
         assert videos[1]["duration"] == 600
 
     def test_parse_videos_empty(self):
-        from bilibili_downloader.bilibili.parser import parse_video_list
+        from platform_video_downloader.bilibili.parser import parse_video_list
 
         data = {"data": {"list": {"vlist": []}}}
         videos = parse_video_list(data)
@@ -62,7 +62,7 @@ class TestParseVideoList:
 
     def test_parse_videos_filters_paid(self):
         """付费/充电专属视频（price > 0）应被过滤掉。"""
-        from bilibili_downloader.bilibili.parser import parse_video_list
+        from platform_video_downloader.bilibili.parser import parse_video_list
 
         data = {
             "data": {
@@ -105,7 +105,7 @@ class TestParseVideoList:
 
     def test_parse_videos_no_price_field(self):
         """没有 price 字段的视频应正常解析（免费视频）。"""
-        from bilibili_downloader.bilibili.parser import parse_video_list
+        from platform_video_downloader.bilibili.parser import parse_video_list
 
         data = {
             "data": {
@@ -128,7 +128,7 @@ class TestParseVideoList:
 
 class TestParseSections:
     def test_parse_sections(self):
-        from bilibili_downloader.bilibili.parser import parse_sections
+        from platform_video_downloader.bilibili.parser import parse_sections
 
         data = {
             "data": {
@@ -161,7 +161,7 @@ class TestParseSections:
 
 class TestParseStreamURLs:
     def test_parse_selects_best_resolution(self):
-        from bilibili_downloader.bilibili.parser import parse_stream_urls
+        from platform_video_downloader.bilibili.parser import parse_stream_urls
 
         data = {
             "data": {
@@ -182,7 +182,7 @@ class TestParseStreamURLs:
         assert urls["audio_url"] == "http://a/audio"
 
     def test_parse_fallback_resolution(self):
-        from bilibili_downloader.bilibili.parser import parse_stream_urls
+        from platform_video_downloader.bilibili.parser import parse_stream_urls
 
         data = {
             "data": {
@@ -201,14 +201,14 @@ class TestParseStreamURLs:
         assert urls["video_url"] == "http://a/720p"
 
     def test_parse_no_streams_raises(self):
-        from bilibili_downloader.bilibili.parser import parse_stream_urls
+        from platform_video_downloader.bilibili.parser import parse_stream_urls
 
         data = {"data": {"dash": {"video": [], "audio": []}}}
         with pytest.raises(ValueError, match="No video streams"):
             parse_stream_urls(data, priority=["720p"])
 
     def test_parse_returns_resolution_label(self):
-        from bilibili_downloader.bilibili.parser import parse_stream_urls
+        from platform_video_downloader.bilibili.parser import parse_stream_urls
 
         data = {
             "data": {

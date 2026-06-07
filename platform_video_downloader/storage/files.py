@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from bilibili_downloader.config import DEFAULT_NAME_TEMPLATE
+from platform_video_downloader.config import DEFAULT_NAME_TEMPLATE
 
 _ILLEGAL_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _ILLEGAL_TRAILING = re.compile(r'[.\s]+$')

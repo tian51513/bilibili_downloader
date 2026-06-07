@@ -6,8 +6,8 @@ import json
 import logging
 import re
 
-from bilibili_downloader.config import DEFAULT_COOKIE_CACHE_PATH
-from bilibili_downloader.platforms.base import BasePlatform
+from platform_video_downloader.config import DEFAULT_COOKIE_CACHE_PATH
+from platform_video_downloader.platforms.base import BasePlatform
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,8 @@ class BilibiliPlatform(BasePlatform):
         }
 
     async def scrape(self, creator_id: str, **kwargs) -> dict:
-        from bilibili_downloader.bilibili.api import BilibiliAPI
-        from bilibili_downloader.bilibili.scraper import BilibiliScraper
+        from platform_video_downloader.bilibili.api import BilibiliAPI
+        from platform_video_downloader.bilibili.scraper import BilibiliScraper
 
         browser = kwargs.get("browser")
         session = kwargs.get("session")
@@ -85,7 +85,7 @@ class BilibiliPlatform(BasePlatform):
     ) -> dict:
         import asyncio
 
-        from bilibili_downloader.core.worker import download_video
+        from platform_video_downloader.core.worker import download_video
 
         api = kwargs.get("api")
         session = kwargs.get("session")

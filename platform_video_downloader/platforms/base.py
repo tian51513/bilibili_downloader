@@ -125,10 +125,10 @@ def create_registry() -> PlatformRegistry:
     """创建并注册所有已知的平台。"""
     registry = PlatformRegistry()
 
-    from bilibili_downloader.platforms.bilibili import BilibiliPlatform
+    from platform_video_downloader.platforms.bilibili import BilibiliPlatform
     registry.register(BilibiliPlatform())
 
-    from bilibili_downloader.platforms.youtube import YouTubePlatform
+    from platform_video_downloader.platforms.youtube import YouTubePlatform
     registry.register(YouTubePlatform())
 
     return registry

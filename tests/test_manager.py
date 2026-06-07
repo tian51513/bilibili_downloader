@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 class TestDownloadManager:
     async def test_manager_processes_queue(self, tmp_path, db):
-        from bilibili_downloader.core.manager import DownloadManager
-        from bilibili_downloader.bilibili.api import BilibiliAPI
+        from platform_video_downloader.core.manager import DownloadManager
+        from platform_video_downloader.bilibili.api import BilibiliAPI
 
         pid = await db.insert_platform(name="bilibili")
         cid = await db.insert_creator(platform_id=pid, remote_id="123", name="TestUP", space_url="https://space.bilibili.com/123")
@@ -21,7 +21,7 @@ class TestDownloadManager:
             await kwargs["db"].update_download_status(kwargs["download_id"], "completed")
             await kwargs["db"].update_download_progress(kwargs["download_id"], 1000)
 
-        with patch("bilibili_downloader.core.manager.download_video", side_effect=fake_download):
+        with patch("platform_video_downloader.core.manager.download_video", side_effect=fake_download):
             await manager.run(mock_session)
 
         stats = await db.get_stats()
@@ -29,8 +29,8 @@ class TestDownloadManager:
         assert stats["pending"] == 0
 
     async def test_manager_skips_existing(self, tmp_path, db):
-        from bilibili_downloader.core.manager import DownloadManager
-        from bilibili_downloader.bilibili.api import BilibiliAPI
+        from platform_video_downloader.core.manager import DownloadManager
+        from platform_video_downloader.bilibili.api import BilibiliAPI
 
         pid = await db.insert_platform(name="bilibili")
         cid = await db.insert_creator(platform_id=pid, remote_id="123", name="TestUP", space_url="https://space.bilibili.com/123")

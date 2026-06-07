@@ -367,13 +367,17 @@ class Database:
         self, status: str | None = None, page: int = 1, page_size: int = 20,
         creator_id: int | None = None, platform_id: int | None = None,
         section_name: str | None = None,
-        tags: list[str] | None = None, sort_by: str = "created_at", sort_order: str = "desc",
+        tags: list[str] | None = None, keyword: str | None = None,
+        sort_by: str = "created_at", sort_order: str = "desc",
     ) -> dict:
         conditions = []
         params = []
         if status:
             conditions.append("d.status=?")
             params.append(status)
+        if keyword:
+            conditions.append("v.title LIKE ?")
+            params.append(f"%{keyword}%")
         if platform_id:
             conditions.append("c.platform_id=?")
             params.append(platform_id)
@@ -575,7 +579,7 @@ class Database:
     async def update_task_url(self, task_id: int, space_url: str, space_uid: str | None = None):
         if not space_uid:
             # 尝试从 URL 提取 space_uid（支持多平台）
-            from bilibili_downloader.platforms.base import PlatformRegistry
+            from platform_video_downloader.platforms.base import PlatformRegistry
             registry = PlatformRegistry()
             platform = registry.identify(space_url)
             if platform:
@@ -625,12 +629,51 @@ class Database:
         return completed, failed
 
     async def check_storage(self, new_output_dir: str) -> dict:
-        """Check completed downloads' save_path validity against filesystem.
-        If old path invalid, try new_output_dir + filename.
-        Returns {moved, missing, total_checked}.
+        """Check downloads' file existence against filesystem.
+
+        1. Scan non-completed downloads: if file exists, mark as completed.
+        2. Scan completed downloads: verify path validity, fix moved/missing.
+        Returns {recovered, moved, missing, total_checked}.
         """
         import os
         new_output_dir = os.path.normpath(new_output_dir)
+        recovered = 0
+        recovered_task_ids = set()
+
+        # Phase 1: scan non-completed downloads where file exists on disk
+        cur = await self._xq(
+            "SELECT d.id, d.save_path, v.creator_id FROM download d "
+            "JOIN video v ON d.video_id = v.id WHERE d.status != 'completed'"
+        )
+        for row in await cur.fetchall():
+            dl_id, save_path, creator_id = row["id"], row["save_path"], row["creator_id"]
+            file_found = False
+            actual_path = save_path
+
+            if os.path.exists(save_path):
+                file_found = True
+            else:
+                # Try new output directory
+                filename = os.path.basename(save_path)
+                new_path = os.path.join(new_output_dir, filename)
+                if os.path.exists(new_path):
+                    file_found = True
+                    actual_path = new_path
+
+            if file_found:
+                size = os.path.getsize(actual_path)
+                await self._xq(
+                    "UPDATE download SET status='completed', save_path=?, file_size=?, "
+                    "error_msg=NULL, finished_at=datetime('now') WHERE id=?",
+                    (actual_path, size, dl_id),
+                )
+                recovered += 1
+                # Find associated task
+                tcur = await self._xq("SELECT id FROM task WHERE creator_id=?", (creator_id,))
+                for trow in await tcur.fetchall():
+                    recovered_task_ids.add(trow[0])
+
+        # Phase 2: scan completed downloads for path validity
         cur = await self._xq(
             "SELECT id, save_path FROM download WHERE status='completed'"
         )
@@ -640,13 +683,11 @@ class Database:
         for row in rows:
             dl_id, save_path = row["id"], row["save_path"]
             if os.path.exists(save_path):
-                # Also backfill file_size if NULL
                 await self._xq(
                     "UPDATE download SET file_size=COALESCE(file_size, ?) WHERE id=? AND file_size IS NULL",
                     (os.path.getsize(save_path), dl_id),
                 )
                 continue
-            # Old path invalid, try new directory
             filename = os.path.basename(save_path)
             new_path = os.path.join(new_output_dir, filename)
             if os.path.exists(new_path):
@@ -662,9 +703,24 @@ class Database:
                     "started_at=NULL, finished_at=NULL, file_size=NULL WHERE id=?", (dl_id,)
                 )
                 missing += 1
-        if moved or missing:
-            logger.info(f"存储检测: {moved} 个路径已更新, {missing} 个标记为待下载")
-        return {"moved": moved, "missing": missing, "total_checked": len(rows)}
+
+        changed = recovered or moved or missing
+        if changed:
+            parts = []
+            if recovered:
+                parts.append(f"{recovered} 个恢复为已完成")
+            if moved:
+                parts.append(f"{moved} 个路径已更新")
+            if missing:
+                parts.append(f"{missing} 个标记为待下载")
+            logger.info(f"存储检测: {', '.join(parts)}")
+
+        return {
+            "recovered": recovered,
+            "moved": moved,
+            "missing": missing,
+            "total_checked": len(rows),
+        }, recovered_task_ids
 
     async def reset_task_downloads(self, creator_id: int):
         """Reset non-completed downloads for a creator to pending status (skip completed)."""
@@ -716,6 +772,29 @@ class Database:
             for trow in await tcur.fetchall():
                 await self.sync_task_status_from_downloads(trow[0])
 
+    async def remove_paid_video(self, download_id: int):
+        """Remove a paid/exclusive video entirely: delete download + video records, sync task."""
+        dl = await self.get_download(download_id)
+        if not dl:
+            return
+        video_id = dl["video_id"]
+        await self._xq("DELETE FROM download WHERE id=?", (download_id,))
+        # Delete video only if no other downloads reference it
+        cur = await self._xq("SELECT COUNT(*) FROM download WHERE video_id=?", (video_id,))
+        cnt = (await cur.fetchone())[0]
+        if cnt == 0:
+            await self._xq("DELETE FROM video WHERE id=?", (video_id,))
+        # Sync task status
+        cur = await self._xq(
+            "SELECT v.creator_id FROM video v WHERE v.id=?", (video_id,))
+        row = await cur.fetchone()
+        if row:
+            cid = row[0]
+            tcur = await self._xq(
+                "SELECT id FROM task WHERE creator_id=?", (cid,))
+            for trow in await tcur.fetchall():
+                await self.sync_task_status_from_downloads(trow[0])
+
     async def sync_task_status_from_downloads(self, task_id: int):
         """根据下载状态同步任务状态。"""
         task = await self.get_task(task_id)
@@ -756,7 +835,7 @@ class Database:
         else:
             new_status = "pending"
 
-        if new_status != task["status"]:
+        if new_status != task["status"] or task["total_videos"] != actual_video_count or task["downloaded_videos"] != completed:
             error_msg = None if new_status in ("pending", "downloading") else task.get("error_message")
             await self.update_task_status(
                 task_id, new_status,

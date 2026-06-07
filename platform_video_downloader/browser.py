@@ -2,7 +2,7 @@ import json
 import logging
 import os
 
-from bilibili_downloader.config import USER_AGENT
+from platform_video_downloader.config import USER_AGENT
 
 logger = logging.getLogger(__name__)
 

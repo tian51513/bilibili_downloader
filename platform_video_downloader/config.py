@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-# bilibili_downloader/config.py
+# platform_video_downloader/config.py
 
 # Download concurrency
 MAX_CONCURRENT_DOWNLOADS = 5
@@ -27,7 +27,7 @@ DEFAULT_RESOLUTION_PRIORITY = ["720p", "480p", "1080p", "240p"]
 DEFAULT_NAME_TEMPLATE = "{title}\u3010{creator}-{section}\u3011"
 
 # Database
-DEFAULT_DB_PATH = "bilibili_downloader.db"
+DEFAULT_DB_PATH = "platform_video_downloader.db"
 
 # Cookie cache
 COOKIE_DIR = "cookies"
@@ -45,7 +45,29 @@ BILIBILI_SPACE_URL_PATTERN = r"https?://space\.bilibili\.com/(\d+)"
 YOUTUBE_PLAYLIST_URL_PATTERN = r"https?://(?:www\.)?youtube\.com/playlist\?list=([A-Za-z0-9_-]+)"
 
 # Settings persistence
-SETTINGS_PATH = "bilibili_settings.json"
+SETTINGS_PATH = "platform_video_downloader_settings.json"
+
+# Old paths for migration (from bilibili_downloader rename)
+_OLD_DB_PATH = "bilibili_downloader.db"
+_OLD_SETTINGS_PATH = "bilibili_settings.json"
+
+
+def get_effective_db_path() -> str:
+    """Return the database path, migrating from old name if needed."""
+    new_path = Path(DEFAULT_DB_PATH)
+    old_path = Path(_OLD_DB_PATH)
+    if not new_path.exists() and old_path.exists():
+        old_path.rename(new_path)
+    return DEFAULT_DB_PATH
+
+
+def get_effective_settings_path() -> str:
+    """Return the settings path, migrating from old name if needed."""
+    new_path = Path(SETTINGS_PATH)
+    old_path = Path(_OLD_SETTINGS_PATH)
+    if not new_path.exists() and old_path.exists():
+        old_path.rename(new_path)
+    return SETTINGS_PATH
 
 _DEFAULTS = {
     "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
@@ -61,7 +83,7 @@ _DEFAULTS = {
 
 def load_settings() -> dict:
     """Load user settings from JSON file, falling back to defaults for missing keys."""
-    path = Path(SETTINGS_PATH)
+    path = Path(get_effective_settings_path())
     settings = dict(_DEFAULTS)
     if path.exists():
         try:
@@ -75,6 +97,6 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> None:
     """Save user settings to JSON file."""
-    path = Path(SETTINGS_PATH)
+    path = Path(get_effective_settings_path())
     with open(path, "w", encoding="utf-8") as f:
         json.dump(settings, f, ensure_ascii=False, indent=2)

@@ -8,9 +8,9 @@ import time
 
 import aiohttp
 
-from bilibili_downloader.config import MIN_SPEED_LIMIT_KB, REQUEST_TIMEOUT
-from bilibili_downloader.core.retry import retry_async
-from bilibili_downloader.storage.files import build_filename, resolve_save_path
+from platform_video_downloader.config import MIN_SPEED_LIMIT_KB, REQUEST_TIMEOUT
+from platform_video_downloader.core.retry import retry_async
+from platform_video_downloader.storage.files import build_filename, resolve_save_path
 
 logger = logging.getLogger(__name__)
 
@@ -212,14 +212,14 @@ async def download_video(
 
             # 检查是否为充电专属视频（get_video_info 返回 is_upower_exclusive）
             if video_info and video_info.get("is_upower_exclusive"):
-                await db.update_download_status(download_id, "skipped", "UP主充电专属视频")
+                await db.remove_paid_video(download_id)
                 if ws_manager:
                     await ws_manager.broadcast({
                         "type": "download_progress",
                         "download_id": download_id,
-                        "status": "skipped",
+                        "status": "removed",
                     })
-                logger.info(f"Skipped {bvid}: UP主充电专属视频")
+                logger.info(f"Removed {bvid}: UP主充电专属视频")
                 return
 
             # Fetch tags if video doesn't have them yet
@@ -231,14 +231,14 @@ async def download_video(
                             max_retries=2, backoff_base=2,
                         )
                     if video_info and video_info.get("is_upower_exclusive"):
-                        await db.update_download_status(download_id, "skipped", "UP主充电专属视频")
+                        await db.remove_paid_video(download_id)
                         if ws_manager:
                             await ws_manager.broadcast({
                                 "type": "download_progress",
                                 "download_id": download_id,
-                                "status": "skipped",
+                                "status": "removed",
                             })
-                        logger.info(f"Skipped {bvid}: UP主充电专属视频")
+                        logger.info(f"Removed {bvid}: UP主充电专属视频")
                         return
                     if video_info and video_info.get("tags"):
                         await db.update_video_tags(video["id"], video_info["tags"])
@@ -255,15 +255,16 @@ async def download_video(
                 logger.debug(f"[worker] {bvid} stream: {stream['resolution']}, "
                              f"video={stream['video_url'][:60]}... audio={'yes' if stream.get('audio_url') else 'no'}")
             except ValueError as e:
-                if "skipped" in str(e) or "62002" in str(e) or "87008" in str(e) or "充值" in str(e):
-                    await db.update_download_status(download_id, "skipped", str(e))
+                if "skipped" in str(e) or "62002" in str(e) or "87008" in str(e) or "充值" in str(e) or "No video streams available" in str(e):
+                    # Delete the download and video record — paid/exclusive videos don't belong in the system
+                    await db.remove_paid_video(download_id)
                     if ws_manager:
                         await ws_manager.broadcast({
                             "type": "download_progress",
                             "download_id": download_id,
-                            "status": "skipped",
+                            "status": "removed",
                         })
-                    logger.info(f"Skipped {bvid}: {e}")
+                    logger.info(f"Removed {bvid}: paid/exclusive video ({e})")
                     return
                 raise
 

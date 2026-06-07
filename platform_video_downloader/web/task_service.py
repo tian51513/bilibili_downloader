@@ -5,7 +5,7 @@ import json
 import logging
 import re
 
-from bilibili_downloader.config import (
+from platform_video_downloader.config import (
     BILIBILI_SPACE_URL_PATTERN,
     DEFAULT_COOKIE_CACHE_PATH,
     DEFAULT_NAME_TEMPLATE,
@@ -15,9 +15,9 @@ from bilibili_downloader.config import (
     MAX_CONCURRENT_DOWNLOADS,
     load_settings,
 )
-from bilibili_downloader.bilibili.api import BilibiliAPI
-from bilibili_downloader.core.manager import DownloadManager
-from bilibili_downloader.platforms.base import create_registry
+from platform_video_downloader.bilibili.api import BilibiliAPI
+from platform_video_downloader.core.manager import DownloadManager
+from platform_video_downloader.platforms.base import create_registry
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class TaskService:
             logger.debug(f"[TaskService] 预填UP主名称失败: {e}")
 
     def _load_cookies(self, platform_name: str) -> list[dict]:
-        from bilibili_downloader.browser import load_cookies_from_file
+        from platform_video_downloader.browser import load_cookies_from_file
         cookie_file = self._get_cookie_file(platform_name)
         if cookie_file:
             return load_cookies_from_file(cookie_file)
@@ -237,7 +237,7 @@ class TaskService:
         session = None
 
         if platform.needs_browser():
-            from bilibili_downloader.browser import PlaywrightBrowser
+            from platform_video_downloader.browser import PlaywrightBrowser
             browser = PlaywrightBrowser(headless=True, cookies=cookies)
             await browser.start()
 
@@ -305,7 +305,7 @@ class TaskService:
                     # 重新加载 cookie 和浏览器，重试采集
                     cookies = self._load_cookies(platform.name)
                     if platform.needs_browser():
-                        from bilibili_downloader.browser import PlaywrightBrowser
+                        from platform_video_downloader.browser import PlaywrightBrowser
                         browser = PlaywrightBrowser(headless=True, cookies=cookies)
                         await browser.start()
                     scrape_kwargs = {"cookies": cookies, "browser": browser, "session": session, "on_progress": _on_scrape_progress}
@@ -380,7 +380,7 @@ class TaskService:
             resolution_priority = settings.get("resolution_priority", DEFAULT_RESOLUTION_PRIORITY)
             name_template = settings.get("name_template", DEFAULT_NAME_TEMPLATE)
             save_dir = settings.get("output_dir", "./downloads")
-            from bilibili_downloader.storage.files import build_filename, resolve_save_path
+            from platform_video_downloader.storage.files import build_filename, resolve_save_path
             videos = await self.db.get_videos_by_creator(cid)
             dl_count = 0
             resolution = resolution_priority[0] if resolution_priority else "720p"
@@ -454,8 +454,8 @@ class TaskService:
             self._login_in_progress = True
             try:
                 await self._broadcast({"type": "login_status", "status": "in_progress"})
-                from bilibili_downloader.browser import PlaywrightBrowser, save_cookies_to_file
-                from bilibili_downloader.cli.main import _qr_code_login
+                from platform_video_downloader.browser import PlaywrightBrowser, save_cookies_to_file
+                from platform_video_downloader.cli.main import _qr_code_login
                 browser = PlaywrightBrowser(headless=False)
                 try:
                     await browser.start()
@@ -630,7 +630,7 @@ class TaskService:
                 cookies = self._load_cookies("bilibili")
                 if cookies:
                     async with aiohttp.ClientSession() as session:
-                        from bilibili_downloader.bilibili.api import BilibiliAPI
+                        from platform_video_downloader.bilibili.api import BilibiliAPI
                         api = BilibiliAPI(session, cookies=cookies)
                         existing_videos = await self.db.get_videos_by_creator(cid)
                         existing_bvids = {v["remote_id"] for v in existing_videos}
@@ -663,7 +663,7 @@ class TaskService:
             resolution_priority = settings.get("resolution_priority", DEFAULT_RESOLUTION_PRIORITY)
             name_template = settings.get("name_template", DEFAULT_NAME_TEMPLATE)
             save_dir = settings.get("output_dir", "./downloads")
-            from bilibili_downloader.storage.files import build_filename, resolve_save_path
+            from platform_video_downloader.storage.files import build_filename, resolve_save_path
             creator_name = await self._get_creator_name(cid)
             for vid_id in new_video_ids:
                 video = await self.db.get_video(vid_id)

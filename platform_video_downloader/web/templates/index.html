@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bilibili Downloader Dashboard</title>
+    <title>Platform Video Downloader Dashboard</title>
     <style>
         /* ===== Theme Variables ===== */
         :root {
@@ -270,7 +270,7 @@
 <body>
     <div class="copy-tip" id="copy-tip">已复制</div>
     <div class="container">
-        <h1>Bilibili Downloader</h1>
+        <h1>Platform Video Downloader</h1>
 
         <!-- Nav tabs -->
         <div class="nav-tabs">
@@ -318,7 +318,8 @@
             </div>
 
             <div class="filters">
-                <select id="filter-creator" onchange="downloadPage=1;loadDownloads()">
+                <input type="text" id="filter-keyword" placeholder="搜索标题..." oninput="debounceSearch()" style="padding:5px 10px;border:1px solid var(--border-input);border-radius:6px;font-size:13px;background:var(--bg-input);color:var(--text);outline:none;width:180px">
+                <select id="filter-creator" onfocus="refreshCreatorFilter()" onchange="downloadPage=1;loadDownloads()">
                     <option value="">全部UP主</option>
                 </select>
                 <select id="filter-platform" onchange="downloadPage=1;loadDownloads()">
@@ -616,13 +617,16 @@
                         if (currentPanel === 'downloads') loadDownloads(downloadPage);
                     } else if (msg.status === 'started') {
                         toggleDlButtons(true);
+                        loadFilters();
                         loadTasks(taskPage);
                         if (currentPanel === 'downloads') loadDownloads(downloadPage);
                     } else if (msg.status === 'stopped') {
                         toggleDlButtons(false);
+                        loadFilters();
                         loadTasks(taskPage);
                         if (currentPanel === 'downloads') loadDownloads(downloadPage);
-                    } else if (msg.status === 'completed' || msg.status === 'merging' || msg.status === 'failed' || msg.status === 'skipped' || msg.status === 'downloading') {
+                    } else if (msg.status === 'completed' || msg.status === 'merging' || msg.status === 'failed' || msg.status === 'skipped' || msg.status === 'downloading' || msg.status === 'removed') {
+                        loadFilters();
                         loadTasks(taskPage);
                         if (currentPanel === 'downloads') loadDownloads(downloadPage);
                     } else {
@@ -931,12 +935,32 @@
         });
 
         // ========== Downloads (paginated) ==========
+        let searchTimer = null;
+        function debounceSearch() {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => { downloadPage = 1; loadDownloads(); }, 300);
+        }
+
+        async function refreshCreatorFilter() {
+            const sel = document.getElementById('filter-creator');
+            const current = sel.value;
+            const creators = await fetchJSON('/api/creators');
+            sel.innerHTML = '<option value="">全部UP主</option>';
+            creators.forEach(c => {
+                const total = c.video_count || 0;
+                const done = c.completed || 0;
+                sel.innerHTML += `<option value="${c.id}"${c.id == current ? ' selected' : ''}>${escHtml(c.name)} (${done}/${total})</option>`;
+            });
+        }
+
         async function loadDownloads(page) {
             if (page !== undefined) downloadPage = page;
             const creatorId = document.getElementById('filter-creator').value;
             const platformId = document.getElementById('filter-platform').value;
+            const keyword = (document.getElementById('filter-keyword').value || '').trim();
             let url = `/api/downloads?page=${downloadPage}&page_size=20`;
             if (currentStatus) url += '&status=' + encodeURIComponent(currentStatus);
+            if (keyword) url += '&keyword=' + encodeURIComponent(keyword);
             if (platformId) url += '&platform_id=' + encodeURIComponent(platformId);
             if (creatorId) url += '&creator_id=' + encodeURIComponent(creatorId);
             if (selectedTags.size > 0) url += '&tags=' + encodeURIComponent([...selectedTags].join(','));
@@ -1391,6 +1415,8 @@
                 const data = await resp.json();
                 if (data.valid) {
                     el.innerHTML = '<span class="valid">&#10003; Cookie 有效</span> — 已登录: <strong>' + escHtml(data.uname || 'B站用户') + '</strong>';
+                    const loginBtn = el.parentElement.querySelector('.btn-warning');
+                    if (loginBtn) loginBtn.style.display = 'none';
                 } else if (data.exists) {
                     el.innerHTML = '<span class="invalid">&#10007; Cookie 已失效</span><br><span style="font-size:12px;color:var(--text-muted)">需要重新扫码登录</span>';
                 } else {
@@ -1408,6 +1434,7 @@
                 const result = await resp.json();
                 if (result.ok) {
                     await checkCookieStatus();
+                    document.getElementById('cookie-status').parentElement.querySelector('.btn-warning').style.display = '';
                 } else {
                     alert('清除失败: ' + (result.error || '未知错误'));
                 }

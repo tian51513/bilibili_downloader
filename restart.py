@@ -145,7 +145,7 @@ def main():
     venv_python = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "Scripts", "python.exe")
     if not os.path.exists(venv_python):
         venv_python = sys.executable
-    subprocess.Popen([venv_python, "-m", "bilibili_downloader.cli.main", "web"])
+    subprocess.Popen([venv_python, "-m", "platform_video_downloader.cli.main", "web"])
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 
-from bilibili_downloader.platforms.base import BasePlatform
+from platform_video_downloader.platforms.base import BasePlatform
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ class YouTubePlatform(BasePlatform):
         import asyncio
         import yt_dlp
 
-        from bilibili_downloader.storage.files import sanitize_filename
+        from platform_video_downloader.storage.files import sanitize_filename
 
         video_id = video["remote_id"]
         title = video["title"]

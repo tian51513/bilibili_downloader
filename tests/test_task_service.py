@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 
 async def test_submit_creates_task():
-    from bilibili_downloader.web.task_service import TaskService
+    from platform_video_downloader.web.task_service import TaskService
     db = AsyncMock()
     db.insert_platform = AsyncMock(return_value=1)
     db.get_platform_by_name = AsyncMock(return_value={"id": 1})
@@ -18,7 +18,7 @@ async def test_submit_creates_task():
 
 
 async def test_submit_returns_existing():
-    from bilibili_downloader.web.task_service import TaskService
+    from platform_video_downloader.web.task_service import TaskService
     db = AsyncMock()
     db.get_task_by_url = AsyncMock(return_value={"id": 99, "status": "pending"})
     ws_manager = MagicMock()
@@ -30,7 +30,7 @@ async def test_submit_returns_existing():
 
 
 async def test_submit_invalid_url():
-    from bilibili_downloader.web.task_service import TaskService
+    from platform_video_downloader.web.task_service import TaskService
     db = AsyncMock()
     db.get_task_by_url = AsyncMock(return_value=None)
     db.get_platform_by_name = AsyncMock(return_value=None)
@@ -46,7 +46,7 @@ async def test_submit_invalid_url():
 
 
 async def test_broadcast_calls_ws_manager():
-    from bilibili_downloader.web.task_service import TaskService
+    from platform_video_downloader.web.task_service import TaskService
     db = AsyncMock()
     ws_manager = AsyncMock()
     ws_manager.broadcast = AsyncMock()
@@ -56,7 +56,7 @@ async def test_broadcast_calls_ws_manager():
 
 
 async def test_broadcast_no_ws_manager():
-    from bilibili_downloader.web.task_service import TaskService
+    from platform_video_downloader.web.task_service import TaskService
     db = AsyncMock()
     ts = TaskService(db=db, ws_manager=None)
     await ts._broadcast({"type": "test"})  # Should not raise

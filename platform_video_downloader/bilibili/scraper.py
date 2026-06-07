@@ -12,7 +12,7 @@ import logging
 
 import aiohttp
 
-from bilibili_downloader.bilibili.parser import (
+from platform_video_downloader.bilibili.parser import (
     parse_sections,
     parse_space_info,
     parse_video_list,
@@ -235,7 +235,7 @@ class BilibiliScraper:
         videos = result["videos"]
 
         if session and cookies:
-            from bilibili_downloader.bilibili.api import BilibiliAPI
+            from platform_video_downloader.bilibili.api import BilibiliAPI
 
             api = BilibiliAPI(session, cookies=cookies)
             existing_bvids = {v["remote_id"] for v in videos}

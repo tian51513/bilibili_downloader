@@ -54,8 +54,8 @@ def _mock_session_get(responses):
 
 class TestDownloadWorker:
     async def test_download_success(self, tmp_path, db):
-        from bilibili_downloader.core.worker import download_video
-        from bilibili_downloader.config import DEFAULT_NAME_TEMPLATE
+        from platform_video_downloader.core.worker import download_video
+        from platform_video_downloader.config import DEFAULT_NAME_TEMPLATE
 
         pid = await db.insert_platform(name="bilibili")
         cid = await db.insert_creator(
@@ -89,7 +89,7 @@ class TestDownloadWorker:
         )
         mock_session = _mock_session_get([video_resp, audio_resp])
 
-        with patch("bilibili_downloader.core.worker._merge_audio_video", new_callable=AsyncMock) as mock_merge:
+        with patch("platform_video_downloader.core.worker._merge_audio_video", new_callable=AsyncMock) as mock_merge:
             async def fake_merge(video_path, audio_path, output_path, download_id, db_arg):
                 # Simulate ffmpeg merge: concatenate video+audio content to output
                 with open(video_path, "rb") as vf, open(audio_path, "rb") as af:
@@ -121,8 +121,8 @@ class TestDownloadWorker:
         assert dl["file_size"] == 1500
 
     async def test_download_skipped_on_paid(self, tmp_path, db):
-        from bilibili_downloader.core.worker import download_video
-        from bilibili_downloader.config import DEFAULT_NAME_TEMPLATE
+        from platform_video_downloader.core.worker import download_video
+        from platform_video_downloader.config import DEFAULT_NAME_TEMPLATE
 
         pid = await db.insert_platform(name="bilibili")
         cid = await db.insert_creator(
@@ -153,14 +153,17 @@ class TestDownloadWorker:
         )
 
         dl = await db.get_download(did)
-        assert dl["status"] == "skipped"
-        assert "充值" in dl["error_msg"]
+        # Paid/exclusive videos are deleted from the system entirely
+        assert dl is None
+        # Video record should also be removed
+        v = await db._xq("SELECT id FROM video WHERE id=?", (vid,))
+        assert await v.fetchone() is None
 
 
 class TestDownloadStream:
     async def test_download_stream_basic(self, tmp_path, db):
         """Test _download_stream writes chunks to file and returns size."""
-        from bilibili_downloader.core.worker import _download_stream
+        from platform_video_downloader.core.worker import _download_stream
 
         pid = await db.insert_platform(name="bilibili")
         creator_id = await db.insert_creator(
@@ -189,7 +192,7 @@ class TestDownloadStream:
 
     async def test_download_stream_resume(self, tmp_path, db):
         """Test _download_stream resumes from existing_size."""
-        from bilibili_downloader.core.worker import _download_stream
+        from platform_video_downloader.core.worker import _download_stream
 
         pid = await db.insert_platform(name="bilibili")
         creator_id = await db.insert_creator(
@@ -227,7 +230,7 @@ class TestDownloadStream:
 
     async def test_download_stream_with_speed_limit(self, tmp_path, db):
         """Test _download_stream respects speed_limit_bps."""
-        from bilibili_downloader.core.worker import _download_stream
+        from platform_video_downloader.core.worker import _download_stream
 
         pid = await db.insert_platform(name="bilibili")
         creator_id = await db.insert_creator(
@@ -257,17 +260,17 @@ class TestDownloadStream:
 
 class TestSpeedLimit:
     async def test_speed_limit_constant_exists(self):
-        from bilibili_downloader.config import MIN_SPEED_LIMIT_KB, DEFAULT_SPEED_LIMIT_MB
+        from platform_video_downloader.config import MIN_SPEED_LIMIT_KB, DEFAULT_SPEED_LIMIT_MB
         assert MIN_SPEED_LIMIT_KB == 100
         assert DEFAULT_SPEED_LIMIT_MB == 0.0
 
     async def test_apply_speed_limit_no_limit(self):
-        from bilibili_downloader.core.worker import _apply_speed_limit
+        from platform_video_downloader.core.worker import _apply_speed_limit
         # speed_limit_bps=0 should return immediately
         await _apply_speed_limit(chunk_size=1024*1024, speed_limit_bps=0, elapsed=0)
 
     async def test_apply_speed_limit_throttles(self):
-        from bilibili_downloader.core.worker import _apply_speed_limit
+        from platform_video_downloader.core.worker import _apply_speed_limit
         import time
         start = time.monotonic()
         await _apply_speed_limit(chunk_size=100*1024, speed_limit_bps=100*1024, elapsed=0)

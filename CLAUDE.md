@@ -1,4 +1,4 @@
-# Bilibili Downloader - Claude Code 项目上下文
+# Platform Video Downloader - Claude Code 项目上下文
 
 ## 项目概述
 
@@ -12,7 +12,7 @@
 - **异步框架**: asyncio + aiohttp
 - **Web框架**: FastAPI + Jinja2 + Uvicorn
 - **数据库**: SQLite（aiosqlite 异步驱动）
-- **CLI**: argparse（入口 `bilibili-dl`）
+- **CLI**: argparse（入口 `pvd`）
 - **构建**: setuptools + pyproject.toml
 - **测试**: pytest + pytest-asyncio（asyncio_mode=auto）
 - **包管理**: uv（虚拟环境 `.venv/`）
@@ -61,7 +61,9 @@ CLI入口 (cli/main.py)
         TaskService后台任务运行器（串行采集队列+下载调度）
         WebSocket实时进度推送（/ws端点，消息类型：task_status/scrape_progress/download_progress/login_required/login_success）
         Cookie自动检测+QR扫码登录（headless检测→失效时弹出headed浏览器→120秒超时）
-        按平台区分cookie文件存储
+        扫码登录按钮根据Cookie状态自动显隐
+        UP主筛选下拉列表点击时刷新最新视频数量
+        视频标题模糊搜索筛选（300ms防抖）
 ```
 
 ### 数据采集策略（on_response 被动读取）
@@ -102,7 +104,7 @@ restart.bat    # 重启服务（自动关闭旧进程+等待端口释放+启动�
 ## 模块结构
 
 ```
-bilibili_downloader/
+platform_video_downloader/
 ├── config.py          # 配置常量 + load_settings/save_settings（JSON持久化）
 ├── main.py            # 程序入口（委托cli.main）
 ├── browser.py         # PlaywrightBrowser — 浏览器生命周期管理 + Cookie文件I/O
@@ -141,7 +143,7 @@ bilibili_downloader/
 - **platform** — 视频平台（bilibili、youtube...），支持多平台扩展
 - **creator** — 创作者，UNIQUE(platform_id, remote_id)
 - **video** — 视频，UNIQUE(creator_id, remote_id)，extra存平台数据JSON，tags存标签JSON数组
-- **download** — 下载记录，UNIQUE(video_id, resolution)，状态机: pending → downloading → merging → completed/skipped/failed
+- **download** — 下载记录，UNIQUE(video_id, resolution)，状态机: pending → downloading → merging → completed/failed（付费视频直接删除记录）
 - **task** — 抓取任务，状态机: init → scraping → pending → downloading → completed/paused/failed
 
 ## 关键配置 (config.py)
@@ -157,15 +159,15 @@ bilibili_downloader/
 | DEFAULT_SPEED_LIMIT_MB | 0.0 | 默认限速 MB/s（0=不限） |
 | DEFAULT_RESOLUTION_PRIORITY | ["720p","480p","1080p","240p"] | 分辨率优先级 |
 | DEFAULT_NAME_TEMPLATE | {title}【{creator}-{section}】 | 文件命名模板 |
-| DEFAULT_DB_PATH | bilibili_downloader.db | SQLite数据库路径 |
+| DEFAULT_DB_PATH | platform_video_downloader.db | SQLite数据库路径 |
 | DEFAULT_COOKIE_CACHE_PATH | cookies/bilibili_cookies.json | B站Cookie缓存文件路径 |
 | DEFAULT_YOUTUBE_COOKIE_CACHE_PATH | cookies/youtube_cookies.txt | YouTube Cookie文件路径 |
 | DEFAULT_WEB_PORT | 8080 | Web仪表盘端口 |
-| SETTINGS_PATH | bilibili_settings.json | 用户设置持久化文件 |
+| SETTINGS_PATH | platform_video_downloader_settings.json | 用户设置持久化文件 |
 
 ## Web设置面板
 
-通过 bilibili_settings.json 持久化用户配置，Web面板可修改：
+通过 platform_video_downloader_settings.json 持久化用户配置，Web面板可修改：
 
 | 设置项 | 说明 | 默认值 |
 |--------|------|--------|
@@ -180,8 +182,8 @@ bilibili_downloader/
 ## CLI用法
 
 ```bash
-bilibili-dl <URL...> [options]          # 下载UP主视频
-bilibili-dl web [--port 8080]           # 启动Web仪表盘
+pvd <URL...> [options]          # 下载UP主视频
+pvd web [--port 8080]           # 启动Web仪表盘
 start.bat                              # Windows快捷启动（自动激活venv+打开浏览器）
 
 选项:
@@ -216,18 +218,20 @@ pip install pytest pytest-asyncio aioresponses
 ### 运行测试
 
 ```bash
-python -m pytest tests/ -v    # 54个测试
+python -m pytest tests/ -v    # 80个测试
 ```
 
 ### 代码规范
 
 - 全部使用async/await，同步代码仅限parse_args和纯函数
 - Database类所有方法以async def开头
-- 错误处理：网络错误重试，永久错误(code=-404/62002)直接标记skipped/failed
+- 错误处理：网络错误重试，永久错误(code=-404/62002/87008)直接删除记录，日志级别：root=INFO, aiosqlite=WARNING
 - 类型标注使用Python 3.10+风格（`str | None`而非`Optional[str]`）
-- Web设置持久化到 bilibili_settings.json，优先级：文件 > config.py默认值
+- Web设置持久化到 platform_video_downloader_settings.json，优先级：文件 > config.py默认值
+- 付费/充电专属视频直接从数据库删除（不保留记录），避免污染统计数据
+- 存储检测两阶段：Phase1 恢复非completed但文件存在的下载，Phase2 验证completed路径有效性
 
-## 当前版本状态 (V1)
+## 当前版本状态 (V4)
 
 ### 已完成
 
@@ -270,7 +274,7 @@ python -m pytest tests/ -v    # 54个测试
 - 下载中视频进度条 + 合并状态显示
 - 统一按钮系统（.btn修饰符，日间/夜间双主题）
 - 设置居中面板（分组+分隔线：下载设置/界面设置/Cookie管理）
-- 设置持久化（bilibili_settings.json）
+- 设置持久化（platform_video_downloader_settings.json）
 - WebSocket实时推送（所有状态变化精确驱动UI刷新，无定时轮询）
 - 下载列表分页（20条/页）+ 任务列表分页（50条/页）
 - 单个/批量下载（复选框+全选+下载选中按钮+每行下载按钮）
@@ -363,6 +367,29 @@ python -m pytest tests/ -v    # 54个测试
 - B站/YouTube 下载完全分离（排除平台串扰导致的 -400 错误）
 - restart.bat 关闭旧终端窗口（`exit` 命令）
 - restart.py 使用 subprocess.Popen 替代 os.execv（避免僵尸进程）
+
+### V4 已完成
+
+**项目重命名**
+- 包名 `bilibili_downloader/` → `platform_video_downloader/`
+- pip 包名 `bilibili-downloader` → `platform-video-downloader`
+- CLI 命令 `bilibili-dl` → `pvd`
+- 数据库文件自动迁移（旧 .db/.settings 文件启动时自动重命名）
+
+**下载管理增强**
+- 视频标题模糊搜索筛选（300ms 防抖，LIKE 匹配）
+- UP主筛选下拉列表点击时刷新最新视频数量（onfocus 触发）
+- 付费/充电专属视频直接从数据库删除（download + video 记录），避免污染统计
+- 存储检测两阶段增强：Phase1 恢复非 completed 但文件已存在的下载，Phase2 验证 completed 路径有效性
+- 任务状态同步修正：total_videos/downloaded_videos 在状态不变时也正确更新
+
+**Web UI 增强**
+- 扫码登录按钮根据 Cookie 状态自动显隐（有效时隐藏，清除后显示）
+- 终端日志降噪：aiosqlite/asyncio 日志级别设为 WARNING
+
+**Bug 修复**
+- clearCookie() fetch 调用模式修正
+- cli_entry() argv 传参修正
 
 ## Agent skills
 

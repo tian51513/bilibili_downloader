@@ -18,7 +18,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-from bilibili_downloader.config import BILIBILI_API_BASE, USER_AGENT
+from platform_video_downloader.config import BILIBILI_API_BASE, USER_AGENT
 
 logger = logging.getLogger(__name__)
 

@@ -15,7 +15,7 @@ env/
 
 # Runtime artifacts
 bilibili_cookies.json
-bilibili_settings.json
+platform_video_downloader_settings.json
 downloads/
 
 # Claude Code

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 
 async def test_validate_cookie_valid():
-    from bilibili_downloader.bilibili.api import BilibiliAPI
+    from platform_video_downloader.bilibili.api import BilibiliAPI
     session = AsyncMock()
     api = BilibiliAPI.__new__(BilibiliAPI)
     api.session = session
@@ -19,7 +19,7 @@ async def test_validate_cookie_valid():
 
 
 async def test_validate_cookie_expired():
-    from bilibili_downloader.bilibili.api import BilibiliAPI
+    from platform_video_downloader.bilibili.api import BilibiliAPI
     session = AsyncMock()
     api = BilibiliAPI.__new__(BilibiliAPI)
     api.session = session
@@ -35,7 +35,7 @@ async def test_validate_cookie_expired():
 
 
 async def test_validate_cookie_network_error():
-    from bilibili_downloader.bilibili.api import BilibiliAPI
+    from platform_video_downloader.bilibili.api import BilibiliAPI
     session = AsyncMock()
     api = BilibiliAPI.__new__(BilibiliAPI)
     api.session = session

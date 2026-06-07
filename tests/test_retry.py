@@ -5,7 +5,7 @@ import aiohttp
 
 class TestRetry:
     async def test_success_no_retry(self):
-        from bilibili_downloader.core.retry import retry_async
+        from platform_video_downloader.core.retry import retry_async
 
         call_count = 0
 
@@ -19,7 +19,7 @@ class TestRetry:
         assert call_count == 1
 
     async def test_retry_then_success(self):
-        from bilibili_downloader.core.retry import retry_async
+        from platform_video_downloader.core.retry import retry_async
 
         call_count = 0
 
@@ -35,7 +35,7 @@ class TestRetry:
         assert call_count == 3
 
     async def test_exhaust_retries_raises(self):
-        from bilibili_downloader.core.retry import retry_async
+        from platform_video_downloader.core.retry import retry_async
 
         async def always_fail():
             raise ConnectionError("dead")
@@ -44,7 +44,7 @@ class TestRetry:
             await retry_async(always_fail, max_retries=2, backoff_base=0)
 
     async def test_no_retry_on_permanent_error(self):
-        from bilibili_downloader.core.retry import retry_async
+        from platform_video_downloader.core.retry import retry_async
 
         call_count = 0
 
@@ -58,7 +58,7 @@ class TestRetry:
         assert call_count == 1
 
     async def test_no_retry_on_skip_error(self):
-        from bilibili_downloader.core.retry import retry_async
+        from platform_video_downloader.core.retry import retry_async
 
         call_count = 0
 

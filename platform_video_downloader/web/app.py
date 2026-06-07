@@ -4,8 +4,8 @@ import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from bilibili_downloader.web.routes import create_routes
-from bilibili_downloader.web.ws_manager import get_ws_manager
+from platform_video_downloader.web.routes import create_routes
+from platform_video_downloader.web.ws_manager import get_ws_manager
 
 logger = logging.getLogger(__name__)
 

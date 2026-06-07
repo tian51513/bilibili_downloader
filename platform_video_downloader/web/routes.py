@@ -5,8 +5,8 @@ import sys
 from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 
-from bilibili_downloader.config import SETTINGS_PATH, load_settings, save_settings
-from bilibili_downloader.web.ws_manager import get_ws_manager
+from platform_video_downloader.config import SETTINGS_PATH, load_settings, save_settings
+from platform_video_downloader.web.ws_manager import get_ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ def create_routes(db, env, task_service=None):
         return HTMLResponse("<html><body><script>window.close();if(!window.closed)location.href='about:blank';</script></body></html>")
 
     async def index(request: Request) -> HTMLResponse:
-        from bilibili_downloader.config import SETTINGS_PATH
+        from platform_video_downloader.config import SETTINGS_PATH
         stats = await db.get_stats()
         settings = load_settings()
         template = env.get_template("index.html")
@@ -35,6 +35,7 @@ def create_routes(db, env, task_service=None):
         section_name = request.query_params.get("section_name")
         tags_param = request.query_params.get("tags")
         tags = [t for t in tags_param.split(",") if t] if tags_param else None
+        keyword = request.query_params.get("keyword")
         page = int(request.query_params.get("page", 1))
         page_size = int(request.query_params.get("page_size", 20))
         downloads = await db.get_all_downloads(
@@ -43,6 +44,7 @@ def create_routes(db, env, task_service=None):
             platform_id=int(platform_id) if platform_id else None,
             section_name=section_name or None,
             tags=tags,
+            keyword=keyword or None,
             page=page, page_size=page_size,
             sort_by=request.query_params.get("sort_by", "created_at"),
             sort_order=request.query_params.get("sort_order", "desc"),
@@ -406,12 +408,12 @@ def create_routes(db, env, task_service=None):
         return JSONResponse({"running": task_service.is_downloading()})
 
     async def api_storage_check(request: Request) -> JSONResponse:
-        """Check completed downloads' file existence and update paths."""
+        """Check downloads' file existence, recover completed, and update paths."""
         settings = load_settings()
         new_output_dir = settings.get("output_dir", "./downloads")
-        result = await db.check_storage(new_output_dir)
+        result, recovered_task_ids = await db.check_storage(new_output_dir)
         # Sync task status after changes
-        if result["moved"] or result["missing"]:
+        if result["recovered"] or result["moved"] or result["missing"]:
             try:
                 tasks_result = await db.get_all_tasks(page=1, page_size=200)
                 for t in tasks_result.get("items", []):
@@ -441,7 +443,7 @@ def create_routes(db, env, task_service=None):
     async def api_cookie_status(request: Request) -> JSONResponse:
         """Check cookie validity."""
         import json
-        from bilibili_downloader.config import DEFAULT_COOKIE_CACHE_PATH
+        from platform_video_downloader.config import DEFAULT_COOKIE_CACHE_PATH
         cookie_path = DEFAULT_COOKIE_CACHE_PATH
         try:
             with open(cookie_path, encoding="utf-8") as f:
@@ -450,7 +452,7 @@ def create_routes(db, env, task_service=None):
                 return JSONResponse({"valid": False, "exists": True, "uname": None})
             import aiohttp
             async with aiohttp.ClientSession() as session:
-                from bilibili_downloader.bilibili.api import BilibiliAPI
+                from platform_video_downloader.bilibili.api import BilibiliAPI
                 api = BilibiliAPI(session, cookies=cookies)
                 valid = await api.validate_cookie()
                 if valid:
@@ -471,7 +473,7 @@ def create_routes(db, env, task_service=None):
 
     async def api_cookie_clear(request: Request) -> JSONResponse:
         """Clear cookie cache file."""
-        from bilibili_downloader.config import DEFAULT_COOKIE_CACHE_PATH
+        from platform_video_downloader.config import DEFAULT_COOKIE_CACHE_PATH
         try:
             os.remove(DEFAULT_COOKIE_CACHE_PATH)
         except FileNotFoundError:
@@ -493,7 +495,7 @@ def create_routes(db, env, task_service=None):
 
     async def api_youtube_cookie_status(request: Request) -> JSONResponse:
         """Check YouTube cookie status."""
-        from bilibili_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
+        from platform_video_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
         import json as _json
         cookie_path = DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
         if not os.path.exists(cookie_path):
@@ -511,7 +513,7 @@ def create_routes(db, env, task_service=None):
 
     async def api_youtube_cookie_import(request: Request) -> JSONResponse:
         """Import YouTube cookie text (Netscape format)."""
-        from bilibili_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
+        from platform_video_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
         data = await request.json()
         cookie_text = data.get("cookie_text", "").strip()
         if not cookie_text:
@@ -547,7 +549,7 @@ def create_routes(db, env, task_service=None):
             return None, "未找到 YouTube 相关 cookie"
 
         lines = ["# Netscape HTTP Cookie File"]
-        lines.append("# Generated by bilibili_downloader from Chrome")
+        lines.append("# Generated by platform_video_downloader from Chrome")
         lines.append("")
         for c in cookies_list:
             # Netscape 格式: domain, domain_flag, path, secure, expiration, name, value
@@ -587,7 +589,7 @@ def create_routes(db, env, task_service=None):
 
     async def api_youtube_cookie_import_from_chrome(request: Request) -> JSONResponse:
         """Import YouTube cookies from Chrome browser (copies DB to temp to avoid lock)."""
-        from bilibili_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
+        from platform_video_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
         try:
             content, error = await _extract_chrome_cookies_to_netscape()
             if error:
@@ -603,7 +605,7 @@ def create_routes(db, env, task_service=None):
 
     async def api_youtube_cookie_clear(request: Request) -> JSONResponse:
         """Clear YouTube cookie file."""
-        from bilibili_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
+        from platform_video_downloader.config import DEFAULT_YOUTUBE_COOKIE_CACHE_PATH
         try:
             os.remove(DEFAULT_YOUTUBE_COOKIE_CACHE_PATH)
         except FileNotFoundError:

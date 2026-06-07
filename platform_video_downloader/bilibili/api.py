@@ -3,8 +3,8 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-from bilibili_downloader.bilibili.parser import parse_stream_urls
-from bilibili_downloader.config import BILIBILI_API_BASE, REQUEST_TIMEOUT, USER_AGENT
+from platform_video_downloader.bilibili.parser import parse_stream_urls
+from platform_video_downloader.config import BILIBILI_API_BASE, REQUEST_TIMEOUT, USER_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ class BilibiliAPI:
 
         使用官方账号（mid=2）的公开空间测试，如果返回 -403 则说明 cookie 无效。
         """
-        from bilibili_downloader.bilibili.wbi import WbiSigner
+        from platform_video_downloader.bilibili.wbi import WbiSigner
         try:
             signer = await WbiSigner.create(self.session)
             params = signer.sign({"mid": "2", "ps": 1, "pn": 1, "order": "pubdate"})
@@ -154,8 +154,8 @@ class BilibiliAPI:
 
         Used to backfill videos that scrolling didn't collect.
         """
-        from bilibili_downloader.bilibili.parser import parse_video_list
-        from bilibili_downloader.bilibili.wbi import WbiSigner
+        from platform_video_downloader.bilibili.parser import parse_video_list
+        from platform_video_downloader.bilibili.wbi import WbiSigner
 
         existing_bvids = existing_bvids or set()
         all_videos: list[dict] = []

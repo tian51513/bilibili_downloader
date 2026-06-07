@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 async def test_fetch_videos_by_api():
     """Test API backfill fetches missing videos."""
-    from bilibili_downloader.bilibili.api import BilibiliAPI
+    from platform_video_downloader.bilibili.api import BilibiliAPI
 
     session = AsyncMock()
     api = BilibiliAPI.__new__(BilibiliAPI)
@@ -38,7 +38,7 @@ async def test_fetch_videos_by_api():
 
     session.get = MagicMock(side_effect=[make_resp(page1, 1, 41), make_resp(page2, 2, 41)])
 
-    with patch("bilibili_downloader.bilibili.wbi.WbiSigner", signer_cls):
+    with patch("platform_video_downloader.bilibili.wbi.WbiSigner", signer_cls):
         result = await api.fetch_videos_by_api("12345", existing_bvids=set(f"BV{i}" for i in range(10)))
 
     assert len(result) == 31  # 41 total - 10 existing

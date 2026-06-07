@@ -1,4 +1,4 @@
-# Bilibili Downloader
+# Platform Video Downloader
 
 多平台视频批量下载器（B站 + YouTube）。Playwright 浏览器采集数据（绕过反爬），aiohttp/yt-dlp 异步高并发下载视频流。自动扫码登录，Web 仪表盘实时监控。支持双流下载、断点续传、限速下载、视频播放等。
 
@@ -18,7 +18,7 @@
 - 异步高并发下载（API/下载信号量分别控制）
 - 分辨率优先级自动选择
 - 指数退避重试 + 永久错误自动识别
-- UP主充电专属视频自动跳过（87008）
+- UP主充电专属视频自动移除（87008，删除记录而非标记跳过）
 - 416 Range 错误自动重试（清理过期 CDN 临时文件）
 
 ### 数据采集
@@ -40,8 +40,11 @@
 - 设置保存反馈提示
 - 分页显示、目录选择器、设置持久化
 - 下载列表排序（标题/时长/分辨率/大小）
-- 存储检测（扫描路径有效性，自动修复）
+- 存储检测（扫描路径有效性，自动恢复+修复）
 - YouTube 视频标题链接到 YouTube 页面
+- 视频标题模糊搜索（300ms防抖）
+- UP主筛选点击时刷新最新视频数量
+- 扫码登录按钮根据Cookie状态自动显隐
 
 ### 重启管理
 - restart.bat 一键重启（自动关闭旧服务 + 关闭旧终端 + 打开新服务）
@@ -56,16 +59,16 @@ pip install -e .
 playwright install chromium
 
 # 首次运行（自动扫码登录）
-bilibili-dl https://space.bilibili.com/33676449 --dry-run
+pvd https://space.bilibili.com/33676449 --dry-run
 
 # 正式下载
-bilibili-dl https://space.bilibili.com/33676449 -o ./downloads
+pvd https://space.bilibili.com/33676449 -o ./downloads
 
 # YouTube 播放列表下载
-bilibili-dl https://www.youtube.com/playlist?list=PLxxxxx -o ./downloads
+pvd https://www.youtube.com/playlist?list=PLxxxxx -o ./downloads
 
 # Web仪表盘（双击 start.bat 或命令行）
-bilibili-dl web
+pvd web
 ```
 
 ## 安装
@@ -74,7 +77,7 @@ bilibili-dl web
 
 ```bash
 git clone <repo-url>
-cd bilibili_downloader
+cd platform_video_downloader
 
 uv venv
 # Windows
@@ -129,21 +132,21 @@ YouTube 下载时 cookie 优先级：手动传入 > `youtube_cookies.txt` 文件
 ### 下载视频
 
 ```bash
-bilibili-dl https://space.bilibili.com/33676449                          # 最简用法
-bilibili-dl https://space.bilibili.com/33676449 -o E:\Video               # 指定目录
-bilibili-dl https://space.bilibili.com/33676449 https://space.bilibili.com/123456  # 多UP主
-bilibili-dl https://space.bilibili.com/33676449 -r 1080p                     # 指定分辨率
-bilibili-dl https://space.bilibili.com/33676449 -n 10                         # 10路并发
-bilibili-dl https://space.bilibili.com/33676449 --dry-run                    # 仅分析
-bilibili-dl https://space.bilibili.com/33676449 --force                       # 重置已下载
-bilibili-dl https://space.bilibili.com/33676449 --no-cache                   # 重新扫码
+pvd https://space.bilibili.com/33676449                          # 最简用法
+pvd https://space.bilibili.com/33676449 -o E:\Video               # 指定目录
+pvd https://space.bilibili.com/33676449 https://space.bilibili.com/123456  # 多UP主
+pvd https://space.bilibili.com/33676449 -r 1080p                     # 指定分辨率
+pvd https://space.bilibili.com/33676449 -n 10                         # 10路并发
+pvd https://space.bilibili.com/33676449 --dry-run                    # 仅分析
+pvd https://space.bilibili.com/33676449 --force                       # 重置已下载
+pvd https://space.bilibili.com/33676449 --no-cache                   # 重新扫码
 ```
 
 ### Web仪表盘
 
 ```bash
-bilibili-dl web                # 默认 http://localhost:8080
-bilibili-dl web --port 9090  # 自定义端口
+pvd web                # 默认 http://localhost:8080
+pvd web --port 9090  # 自定义端口
 start.bat                   # Windows 一键启动（自动激活venv+打开浏览器）
 restart.bat                 # Windows 一键重启（自动关闭旧进程+终端+启动新服务）
 ```
@@ -222,7 +225,7 @@ YouTube: Video Title【Channel】_dQw4w9WgXcQ.mp4
 ## 项目结构
 
 ```
-bilibili_downloader/
+platform_video_downloader/
 ├── config.py          # 配置常量 + 设置持久化
 ├── main.py            # 程序入口
 ├── browser.py         # Playwright浏览器 + Cookie缓存
