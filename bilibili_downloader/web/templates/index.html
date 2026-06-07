@@ -575,6 +575,7 @@
                 const msg = JSON.parse(e.data);
                 if (['task_status', 'scrape_progress'].includes(msg.type)) {
                     loadStats();
+                    loadFilters();
                     loadTasks(taskPage);
                 }
                 if (msg.type === 'download_progress') {
