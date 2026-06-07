@@ -25,6 +25,7 @@ def create_routes(db, env, task_service=None):
     async def api_downloads(request: Request) -> JSONResponse:
         status = request.query_params.get("status")
         creator_id = request.query_params.get("creator_id")
+        platform_id = request.query_params.get("platform_id")
         section_name = request.query_params.get("section_name")
         tags_param = request.query_params.get("tags")
         tags = [t for t in tags_param.split(",") if t] if tags_param else None
@@ -33,6 +34,7 @@ def create_routes(db, env, task_service=None):
         downloads = await db.get_all_downloads(
             status=status or None,
             creator_id=int(creator_id) if creator_id else None,
+            platform_id=int(platform_id) if platform_id else None,
             section_name=section_name or None,
             tags=tags,
             page=page, page_size=page_size,
@@ -52,6 +54,10 @@ def create_routes(db, env, task_service=None):
     async def api_creators(request: Request) -> JSONResponse:
         creators = await db.get_creators_with_stats()
         return JSONResponse(creators)
+
+    async def api_platforms(request: Request) -> JSONResponse:
+        platforms = await db.get_all_platforms()
+        return JSONResponse(platforms)
 
     async def api_sections(request: Request) -> JSONResponse:
         sections = await db.get_sections()
@@ -428,6 +434,7 @@ def create_routes(db, env, task_service=None):
         "/api/downloads/{download_id}/delete": (api_download_delete, ["DELETE"]),
         "/api/downloads/{download_id}/play": (api_video_file, ["GET"]),
         "/api/creators": (api_creators, ["GET"]),
+        "/api/platforms": (api_platforms, ["GET"]),
         "/api/sections": (api_sections, ["GET"]),
         "/api/tags": (api_tags, ["GET"]),
         "/api/settings": (api_settings, ["GET", "POST"]),

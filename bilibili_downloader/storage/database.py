@@ -124,6 +124,10 @@ class Database:
         await self._conn.commit()
         return cur.lastrowid
 
+    async def get_all_platforms(self) -> list[dict]:
+        cur = await self._conn.execute("SELECT * FROM platform")
+        return [dict(r) for r in await cur.fetchall()]
+
     async def get_platform(self, platform_id: int) -> dict:
         cur = await self._conn.execute(
             "SELECT * FROM platform WHERE id=?", (platform_id,)
@@ -351,7 +355,8 @@ class Database:
 
     async def get_all_downloads(
         self, status: str | None = None, page: int = 1, page_size: int = 20,
-        creator_id: int | None = None, section_name: str | None = None,
+        creator_id: int | None = None, platform_id: int | None = None,
+        section_name: str | None = None,
         tags: list[str] | None = None, sort_by: str = "created_at", sort_order: str = "desc",
     ) -> dict:
         conditions = []
@@ -359,6 +364,9 @@ class Database:
         if status:
             conditions.append("d.status=?")
             params.append(status)
+        if platform_id:
+            conditions.append("c.platform_id=?")
+            params.append(platform_id)
         if creator_id:
             conditions.append("c.id=?")
             params.append(creator_id)
@@ -398,9 +406,11 @@ class Database:
         params.extend([page_size, offset])
         cur = await self._conn.execute(
             f"SELECT d.*, v.title, v.section_name, v.remote_id as bvid, v.tags, v.duration, "
-            f"c.name as creator_name, c.id as creator_id "
+            f"c.name as creator_name, c.id as creator_id, "
+            f"p.name as platform_name, p.base_url as platform_url "
             f"FROM download d JOIN video v ON d.video_id = v.id "
             f"JOIN creator c ON v.creator_id = c.id "
+            f"JOIN platform p ON c.platform_id = p.id "
             f"{where} {order_by} LIMIT ? OFFSET ?",
             params,
         )
@@ -486,9 +496,11 @@ class Database:
         params.extend([page_size, offset])
         cur = await self._conn.execute(
             f"SELECT t.*, c.name as creator_name, c.avatar_url, t.display_name, "
+            f"p.name as platform_name, p.base_url as platform_url, "
             f"(SELECT COALESCE(SUM(d.file_size), 0) FROM download d "
             f"JOIN video v ON d.video_id = v.id WHERE v.creator_id = t.creator_id AND d.status = 'completed') as total_file_size "
             f"FROM task t LEFT JOIN creator c ON t.creator_id = c.id "
+            f"LEFT JOIN platform p ON t.platform_id = p.id "
             f"{where} ORDER BY t.created_at DESC LIMIT ? OFFSET ?",
             params,
         )

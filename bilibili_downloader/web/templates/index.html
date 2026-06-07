@@ -308,6 +308,9 @@
                 <select id="filter-creator" onchange="downloadPage=1;loadDownloads()">
                     <option value="">全部UP主</option>
                 </select>
+                <select id="filter-platform" onchange="downloadPage=1;loadDownloads()">
+                    <option value="">全部网站</option>
+                </select>
                 <div class="tag-filter-wrap" id="tag-filter-wrap">
                     <div class="tag-filter-btn" onclick="toggleTagDropdown()">
                         <span>标签筛选</span>
@@ -344,6 +347,7 @@
                     <thead>
                         <tr>
                             <th style="width:30px"><input type="checkbox" id="dl-select-all" onchange="toggleDlSelectAll(this.checked)"></th>
+                            <th>网站</th>
                             <th>UP主</th>
                             <th class="sortable" onclick="toggleSort('title')">视频标题<span class="sort-arrow" data-sort="title"></span></th>
                             <th>标签</th>
@@ -380,6 +384,7 @@
                     <thead>
                         <tr>
                             <th>UP主</th>
+                            <th>网站</th>
                             <th>状态</th>
                             <th>视频总数</th>
                             <th>已采集</th>
@@ -747,8 +752,9 @@
 
         // ========== Filters ==========
         async function loadFilters() {
-            const [creators, tags] = await Promise.all([
+            const [creators, platforms, tags] = await Promise.all([
                 fetchJSON('/api/creators'),
+                fetchJSON('/api/platforms'),
                 fetchJSON('/api/tags'),
             ]);
             const selC = document.getElementById('filter-creator');
@@ -757,6 +763,11 @@
                 const total = c.video_count || 0;
                 const done = c.completed || 0;
                 selC.innerHTML += `<option value="${c.id}">${escHtml(c.name)} (${done}/${total})</option>`;
+            });
+            const selP = document.getElementById('filter-platform');
+            selP.innerHTML = '<option value="">全部网站</option>';
+            platforms.forEach(p => {
+                selP.innerHTML += `<option value="${p.id}">${escHtml(p.name)}</option>`;
             });
             allTags = tags;
             renderTagOptions();
@@ -856,8 +867,10 @@
         async function loadDownloads(page) {
             if (page !== undefined) downloadPage = page;
             const creatorId = document.getElementById('filter-creator').value;
+            const platformId = document.getElementById('filter-platform').value;
             let url = `/api/downloads?page=${downloadPage}&page_size=20`;
             if (currentStatus) url += '&status=' + encodeURIComponent(currentStatus);
+            if (platformId) url += '&platform_id=' + encodeURIComponent(platformId);
             if (creatorId) url += '&creator_id=' + encodeURIComponent(creatorId);
             if (selectedTags.size > 0) url += '&tags=' + encodeURIComponent([...selectedTags].join(','));
             url += '&sort_by=' + encodeURIComponent(currentSortBy);
@@ -901,6 +914,7 @@
                 } catch(e) {}
                 return `<tr class="${rowClass}" data-dl-id="${dl.id}">
                     <td><input type="checkbox" class="dl-check" value="${dl.id}" ${dl.status === 'downloading' ? 'disabled' : ''}></td>
+                    <td>${dl.platform_url ? `<a href="${escAttr(dl.platform_url)}" target="_blank">${escHtml(dl.platform_name || '')}</a>` : escHtml(dl.platform_name || '')}</td>
                     <td>${avatar}${escHtml(dl.creator_name || '')}</td>
                     <td class="title-cell">${dl.bvid ? `<a href="https://www.bilibili.com/video/${escHtml(dl.bvid)}" target="_blank" title="${escHtml(dl.title || '')}">${escHtml(dl.title || '')}</a>` : escHtml(dl.title || '')}</td>
                     <td>${tagsHtml || '-'}</td>
@@ -1240,6 +1254,7 @@
                 const timeStr = t.created_at ? new Date(t.created_at).toISOString().replace('T', ' ').substring(0, 19) : '-';
                 return `<tr>
                     <td>${nameDisplay}</td>
+                    <td>${t.platform_url ? `<a href="${escAttr(t.platform_url)}" target="_blank">${escHtml(t.platform_name || '')}</a>` : escHtml(t.platform_name || '')}</td>
                     <td><span class="status status-${t.status}">${t.status}</span></td>
                     <td>${t.total_videos}</td>
                     <td>${t.scraped_videos}</td>
