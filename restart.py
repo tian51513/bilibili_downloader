@@ -40,6 +40,43 @@ def is_port_listening(port: int) -> bool:
     return False
 
 
+def close_browser_tabs(port: int):
+    """关闭通过 start.bat 打开的浏览器标签页"""
+    url = f"http://localhost:{port}/"
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, encoding="gbk", errors="replace",
+        )
+        for line in result.stdout.strip().splitlines():
+            line = line.strip().strip('"')
+            parts = [p.strip().strip('"') for p in line.split(",")]
+            if len(parts) < 2:
+                continue
+            pid = parts[1]
+            if not pid.isdigit():
+                continue
+            # 用 wmic 查找该 chrome 进程的命令行参数
+            try:
+                cmd_result = subprocess.run(
+                    ["wmic", "process", "where", f"ProcessId={pid}",
+                     "get", "CommandLine", "/FORMAT:CSV", "/NH"],
+                    capture_output=True, text=True, encoding="gbk", errors="replace",
+                    timeout=5,
+                )
+                for cmd_line in cmd_result.stdout.strip().splitlines():
+                    if url in cmd_line:
+                        subprocess.run(
+                            ["taskkill", "/F", "/PID", pid],
+                            capture_output=True, timeout=5,
+                        )
+                        print(f"  已关闭浏览器标签页 PID={pid}")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def wait_port_free(port: int, timeout: int = 15):
     """等待端口释放"""
     for i in range(timeout):
@@ -62,6 +99,11 @@ def main():
             killed = True
             break
         time.sleep(1)
+
+    if killed:
+        print("旧服务已关闭")
+        print("正在关闭旧浏览器标签页...")
+        close_browser_tabs(port)
 
     if not wait_port_free(port):
         print(f"错误: 端口 {port} 无法释放，请手动关闭旧窗口后重试")
